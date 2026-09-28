@@ -67,6 +67,16 @@ class LogEvent(BaseModel):
     template: str | None = None
 
 
+class LogLine(BaseModel):
+    """One redacted log event as the live feed shows it (§7 ``logs`` message, ``/logs/recent``)."""
+
+    ts: float
+    level: Level
+    service: str
+    message: str  # redacted
+    pattern_id: str | None = None  # error/warn lines only
+
+
 class Signal(BaseModel):
     type: SignalType
     service: str

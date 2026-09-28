@@ -22,6 +22,7 @@ from app.correlation import DependencyGraph
 from app.detectors import Detectors, Evaluation
 from app.explainer.base import Explainer
 from app.incidents import IncidentManager
+from app.logfeed import LogFeed
 from app.models import (
     IncidentEvent,
     IncidentState,
@@ -121,6 +122,7 @@ class Pipeline:
             poll_seconds=settings.COLLECTOR_POLL_SECONDS,
         )
         self.hub = Hub()
+        self.logfeed = LogFeed(settings)
         self.history: deque[dict[str, Any]] = deque(
             maxlen=max(1, round(settings.HISTORY_SECONDS / settings.TICK_SECONDS))
         )
@@ -213,7 +215,9 @@ class Pipeline:
 
     def _ingest(self, line: str) -> None:
         try:
-            self.aggregator.add(self.parser.parse(line))
+            event = self.parser.parse(line)
+            self.logfeed.add(event)  # the parser has already redacted it
+            self.aggregator.add(event)
         except Exception as exc:  # one bad line never stops monitoring
             self.errors["ingest"] += 1
             logger.error("line ingest failed", extra={"error": type(exc).__name__})
@@ -236,6 +240,9 @@ class Pipeline:
         if metrics is not None:
             self.history.append(metrics)
             messages.append({"type": "metrics", "data": metrics})
+        logs = self._stage("logs", self.logfeed.flush, None)
+        if logs is not None:
+            messages.append({"type": "logs", "data": logs})
         messages.extend(self._stage("events", lambda: self._event_messages(events), []))
         for message in messages:
             self.hub.publish(message)

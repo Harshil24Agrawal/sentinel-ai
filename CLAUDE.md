@@ -276,7 +276,10 @@ REST (JSON, prefix `/api`):
 - `POST /config/sensitivity` `{open_z: 2..5}` → `{ok, open_z}` (422 outside the range)
 - `GET /stats` → `{naive_alerts, sentinel_incidents, sentinel_notifications, detection_latency_s: {scenario: seconds}, phi_redacted}` (`sentinel_incidents` counts groups)
 - `GET /metrics/history?seconds=300` → `[metrics frame]` (the last N seconds of the WebSocket `metrics` messages, oldest first; lets a freshly loaded page draw its chart)
+- `GET /logs/recent?service=&level=&limit=200` → `[LogLine]`, the live log tail, **newest last**. Reads a ring buffer of the last `LOG_BUFFER_SIZE` (500) parsed, **redacted** events. `service` is an exact match; `level` is an exact match on one level or a comma-separated list (`ERROR,CRITICAL`; `WARNING` is accepted for `WARN`, `FATAL` for `CRITICAL`); both are optional. The filters apply first, then the last `limit` (1..500) remain. An unknown `level` or an out-of-range `limit` is a 422.
 - `GET /replay/{id}` → `{frames: [{t, services: {...}}]}` (stretch)
+
+`LogLine` = `{ts, level: "DEBUG"|"INFO"|"WARN"|"ERROR"|"CRITICAL", service, message, pattern_id|null}` (`pattern_id` is set for ERROR/WARN lines only; lines that match no known format arrive as `service: "unknown"`, `INFO`).
 
 `GroupSummary`:
 ```
@@ -308,6 +311,7 @@ WebSocket `/ws`: each message is `{"type": ..., "data": ...}`:
 - `metrics` every tick: `{t, services: {name: {volume, error_rate, p95_latency, band: [lo, hi], status}}}` (`band` is the normal error-rate range)
 - `incident_opened` | `incident_updated` | `incident_resolved`: `GroupSummary`. `opened` is sent when a group appears (or a resolved group reopens), `updated` when its severity, members, origin or evidence change, `resolved` when its last member resolves.
 - `notification`: `{channel: "sns"|"cloudwatch"|"dryrun", incident_id (the group id), severity, ok}`
+- `logs` once per tick (sent even when nothing arrived): `{lines: [LogLine], sampled_out: N, capped: M}`, in arrival order. Every ERROR/CRITICAL and WARN line of the tick is included, plus a sample of at most `LOG_INFO_PER_TICK` (10) INFO/DEBUG lines, evenly spaced through the tick; `sampled_out` counts the INFO/DEBUG lines **not** sent. A message never holds more than `LOG_LINES_PER_MESSAGE` (50) lines: when the tick has more, ERROR lines are kept before WARN before INFO (newest first within a level), and `capped` counts the ERROR/WARN lines dropped for that reason (`0` in normal operation; the ring buffer behind `/logs/recent` still has them). `capped` is additive to the original `{lines, sampled_out}` shape. Lines are redacted before they are buffered, so a `logs` message never carries PHI.
 
 The frontend falls back to polling `/api/services` and `/api/incidents` every 2s if the WebSocket disconnects, and shows a connection indicator.
 
@@ -374,6 +378,9 @@ Single page, dark operations-center style, responsive.
 | SNS_TOPIC_ARN | (empty) | SNS target |
 | LLM_PROVIDER / LLM_MODEL | none / (empty) | optional explainer |
 | GENERATOR_ENABLED | true | built-in synthetic traffic |
+| LOG_BUFFER_SIZE | 500 | redacted log events kept for `/api/logs/recent` |
+| LOG_INFO_PER_TICK | 10 | INFO/DEBUG lines sampled into each WebSocket `logs` message |
+| LOG_LINES_PER_MESSAGE | 50 | hard cap on lines in one `logs` message |
 
 ---
 

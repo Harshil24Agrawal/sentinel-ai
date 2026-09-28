@@ -276,11 +276,23 @@ def live_settings(tmp_path: Path, **overrides: object):  # type: ignore[no-untyp
     return make_settings(**{**values, **overrides})
 
 
-def test_websocket_streams_metrics_every_tick(tmp_path: Path) -> None:
+def receive_of_type(ws, kind: str) -> dict:  # type: ignore[no-untyped-def]
+    """The next WebSocket message of ``kind`` (metrics and logs both arrive every tick)."""
+    while True:
+        message = ws.receive_json()
+        if message["type"] == kind:
+            return message
+
+
+def test_websocket_streams_metrics_and_logs_every_tick(tmp_path: Path) -> None:
     with TestClient(create_app(live_settings(tmp_path))) as client:
         with client.websocket_connect("/ws") as ws:
-            messages = [ws.receive_json() for _ in range(4)]
-    assert {m["type"] for m in messages} == {"metrics"}
+            received = [ws.receive_json() for _ in range(8)]
+    assert {m["type"] for m in received} == {"metrics", "logs"}
+    logs = [m["data"] for m in received if m["type"] == "logs"]
+    assert logs and all(set(d) == {"lines", "sampled_out", "capped"} for d in logs)
+    messages = [m for m in received if m["type"] == "metrics"][:4]
+    assert len(messages) == 4
     times = [m["data"]["t"] for m in messages]
     assert times == sorted(times) and len(set(times)) == 4
     services = messages[-1]["data"]["services"]
@@ -333,10 +345,13 @@ def test_a_running_pipeline_reads_lines_from_the_log_file(tmp_path: Path) -> Non
                     f.write(f"2026-09-28T10:00:01.000Z INFO database latency_ms=9 Query {i} ok\n")
             volume = 0
             for _ in range(60):
-                volume = ws.receive_json()["data"]["services"]["database"]["volume"]
+                volume = receive_of_type(ws, "metrics")["data"]["services"]["database"]["volume"]
                 if volume >= 20:
                     break
-    assert volume >= 20
+            assert volume >= 20
+            # the same lines reach the live feed (sampled: at most 10 INFO lines per tick)
+            recent = client.get("/api/logs/recent?service=database").json()
+            assert len(recent) == 20 and recent[-1]["message"] == "Query 19 ok"
 
 
 # ---- the dashboard is served from the same origin ---------------------------------------

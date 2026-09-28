@@ -108,6 +108,11 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     FRONTEND_DIR: str = ""  # default: <repo>/frontend, served at /
 
+    # Live log feed: /api/logs/recent and the WebSocket "logs" message
+    LOG_BUFFER_SIZE: int = 500
+    LOG_INFO_PER_TICK: int = 10
+    LOG_LINES_PER_MESSAGE: int = 50
+
     # Built-in synthetic traffic
     GENERATOR_ENABLED: bool = True
     GENERATOR_SEED: int | None = None  # set for reproducible demo traffic

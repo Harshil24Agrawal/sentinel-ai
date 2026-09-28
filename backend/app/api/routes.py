@@ -8,11 +8,17 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from app.models import GroupCard, GroupSummary, ServiceStatus, Stats
+from app.models import GroupCard, GroupSummary, Level, LogLine, ServiceStatus, Stats
 from app.pipeline import Pipeline, SimulationDisabledError
 from generator.scenarios import UnknownScenarioError
 
 router = APIRouter(prefix="/api")
+
+_LEVEL_NAMES: dict[str, Level] = {
+    **{level.value: level for level in Level},
+    "WARNING": Level.WARN,
+    "FATAL": Level.CRITICAL,
+}
 
 
 def pipeline_of(request: Request) -> Pipeline:
@@ -71,6 +77,24 @@ async def sensitivity(request: Request, body: SensitivityRequest) -> dict[str, A
 @router.get("/stats", response_model=Stats)
 async def stats(request: Request) -> Stats:
     return pipeline_of(request).stats()
+
+
+@router.get("/logs/recent", response_model=list[LogLine])
+async def recent_logs(
+    request: Request,
+    service: str | None = None,
+    level: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 200,
+) -> list[LogLine]:
+    """The live log tail (redacted), newest last. ``level`` is one level or a comma list."""
+    levels = None
+    if level:
+        try:
+            names = [name.strip().upper() for name in level.split(",") if name.strip()]
+            levels = {_LEVEL_NAMES[name] for name in names}
+        except KeyError as exc:
+            raise HTTPException(status_code=422, detail=f"unknown level {exc.args[0]!r}") from None
+    return pipeline_of(request).logfeed.recent(service or None, levels or None, limit)
 
 
 @router.get("/metrics/history")
