@@ -46,8 +46,12 @@ class Redactor:
             rf'''(?P<pre>"(?:{alt})"\s*:\s*)(?!"{already}")(?:"(?:[^"\\]|\\.)*"|-?\d+(?:\.\d+)?)''',
             re.IGNORECASE,
         )
-        self._member_id = re.compile(
+        member_id = (
             member_id_pattern if member_id_pattern is not None else settings.MEMBER_ID_PATTERN
+        )
+        # SSN, email, member ID and phone in a single pass (this runs on every line)
+        self._pattern_based = re.compile(
+            f"{_SSN.pattern}|{_EMAIL.pattern}|(?:{member_id})|{_PHONE.pattern}"
         )
         self._total = 0
 
@@ -72,9 +76,8 @@ class Redactor:
         count += n
         text, n = self._json.subn(lambda m: m["pre"] + f'"{REDACTED}"', text)
         count += n
-        for pattern in (_SSN, _EMAIL, self._member_id, _PHONE):
-            text, n = pattern.subn(REDACTED, text)
-            count += n
+        text, n = self._pattern_based.subn(REDACTED, text)
+        count += n
         if track:
             self._total += count
         return text, count

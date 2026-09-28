@@ -48,6 +48,19 @@ class Settings(BaseSettings):
     SURGE_MIN_COUNT: int = 10
     NEW_PATTERN_MIN_COUNT: int = 3
 
+    # Silence looks at the last N seconds of the window; 60 (= WINDOW_SECONDS) is the spec's
+    # "window volume < 20% of median". Lower it (e.g. 20) to detect silence sooner.
+    SILENCE_LOOKBACK_SECONDS: int = 60
+    MAX_PATTERNS_PER_SERVICE: int = 1000  # bounds first-seen/rate tracking per service
+
+    # Severity (§6.9)
+    SEVERITY_Z_MEDIUM: float = 5.0
+    SEVERITY_Z_HIGH: float = 8.0
+    SEVERITY_Z_CRITICAL: float = 12.0
+    SEVERITY_LONG_ANOMALY_SECONDS: int = 120
+    CRITICAL_ERROR_RATE: float = 0.25
+    CRITICAL_SILENCE_SECONDS: int = 30
+
     # Baseline floors (added to 1.4826 * MAD)
     ERROR_RATE_FLOOR: float = 0.005
     LATENCY_FLOOR_MS: float = 20.0

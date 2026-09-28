@@ -71,12 +71,19 @@ class LogParser:
 
     def parse(self, line: str) -> LogEvent:
         raw = line.rstrip("\r\n")
-        fields = self._parse_json(raw) if raw.lstrip().startswith("{") else None
-        if fields is None:
-            fields = self._parse_regex(raw)
-
-        # Tracked once, on raw, which contains every PHI value the message does.
+        # The redaction count is tracked once, on the raw line, which holds every PHI value
+        # the message does.
         red_raw, _ = self._redactor.redact(raw)
+        fields = self._parse_json(raw) if raw.lstrip().startswith("{") else None
+        if fields is not None:
+            # JSON is parsed from the original (redacting first could break the syntax), so
+            # its message needs its own redaction pass.
+            message, _ = self._redactor.redact(fields.message, track=False)
+        else:
+            # Everything else is parsed from the already-redacted line: one pass per line.
+            # PHI never sits in the timestamp/level/service header, so the parse is unaffected.
+            fields = self._parse_regex(red_raw)
+            message = fields.message if fields else red_raw
         red_raw = red_raw[:MAX_STORED_CHARS]
 
         if fields is None:
@@ -92,7 +99,6 @@ class LogParser:
                 parsed=False,
             )
 
-        message, _ = self._redactor.redact(fields.message, track=False)
         message = message[:MAX_STORED_CHARS]
         is_error = fields.level in (Level.ERROR, Level.CRITICAL)
         is_warn = fields.level is Level.WARN

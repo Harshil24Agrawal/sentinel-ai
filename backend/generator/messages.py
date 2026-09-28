@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import random
+from collections.abc import Callable
 from dataclasses import dataclass
 
 PHI_LINE_RATE = 1 / 200  # share of normal lines that carry a PHI-like field
@@ -94,16 +95,21 @@ def _hex(rng: random.Random) -> str:
     return "".join(rng.choices("0123456789abcdef", k=11)) + rng.choice("abcdef")
 
 
+_FIELDS: dict[str, Callable[[random.Random], object]] = {
+    "id": lambda rng: rng.randint(10000, 99999),
+    "n": lambda rng: rng.randint(1, 500),
+    "ms": lambda rng: rng.randint(2500, 3500),
+    "hex": _hex,
+    "http5": lambda rng: rng.choice((500, 502, 503)),
+    "auth_code": lambda rng: rng.choice((401, 403)),
+}
+
+
 def render(template: str, rng: random.Random) -> str:
-    """Fill ``{id}``, ``{n}``, ``{ms}``, ``{hex}``, ``{http5}``, ``{auth_code}`` placeholders."""
-    return template.format(
-        id=rng.randint(10000, 99999),
-        n=rng.randint(1, 500),
-        ms=rng.randint(2500, 3500),
-        hex=_hex(rng),
-        http5=rng.choice((500, 502, 503)),
-        auth_code=rng.choice((401, 403)),
-    )
+    """Fill ``{id}``, ``{n}``, ``{ms}``, ``{hex}``, ``{http5}``, ``{auth_code}`` placeholders
+    (only the ones the template uses are drawn)."""
+    values = {name: draw(rng) for name, draw in _FIELDS.items() if f"{{{name}}}" in template}
+    return template.format(**values)
 
 
 def phi_suffix(rng: random.Random) -> str:
