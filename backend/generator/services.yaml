@@ -1,0 +1,9 @@
+# Synthetic services and dependencies (CLAUDE.md §5). Also used for blast radius.
+services:
+  patient-portal:       {rps: 20, base_error: 0.02,  latency_ms: [80, 20],  depends_on: [auth-service, appointment-service]}
+  auth-service:         {rps: 15, base_error: 0.04,  latency_ms: [40, 10],  depends_on: [database]}
+  appointment-service:  {rps: 12, base_error: 0.02,  latency_ms: [110, 25], depends_on: [database, notification-service]}
+  claims-service:       {rps: 25, base_error: 0.015, latency_ms: [150, 40], depends_on: [database, provider-service]}
+  provider-service:     {rps: 8,  base_error: 0.01,  latency_ms: [90, 20],  depends_on: [database]}
+  notification-service: {rps: 6,  base_error: 0.01,  latency_ms: [60, 15],  depends_on: []}
+  database:             {rps: 30, base_error: 0.005, latency_ms: [8, 3],    depends_on: []}

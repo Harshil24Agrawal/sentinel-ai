@@ -1,0 +1,19 @@
+# Secrets
+.env
+
+# Runtime data (data/ itself stays tracked so data/logs/.gitkeep is kept)
+data/logs/*.log
+data/*.db
+data/*.jsonl
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Frontend
+node_modules/
+dist/
