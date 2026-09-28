@@ -1,1 +1,572 @@
-"""Incident lifecycle: persistence, hysteresis, cooldown, notifications."""
+"""Incident lifecycle: persistence, hysteresis, cooldown/reopen, grouping, notifications.
+
+This is the alert-fatigue core. Detectors say what looks odd this tick; the manager decides
+what becomes an incident, when it is really over, and who gets told (once, not per tick).
+"""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from typing import Any
+
+from app.aggregator import Aggregator
+from app.baseline import Baseline
+from app.clock import Clock
+from app.config import Settings, get_settings
+from app.correlation import CorrelationEngine, CorrelationGroup, DependencyGraph, Member
+from app.detectors import Evaluation
+from app.hints import PatternKey, hint_for, merge_evidence, rank_patterns, top_patterns
+from app.models import (
+    Escalation,
+    Incident,
+    IncidentEvent,
+    IncidentState,
+    IncidentSummary,
+    NotifyRequest,
+    PatternRef,
+    Severity,
+    SignalType,
+    TimelineEntry,
+)
+from app.severity import STATISTICAL_SIGNALS, compute_severity
+from app.store import Store
+
+logger = logging.getLogger(__name__)
+
+SIGNAL_LABELS: dict[SignalType, str] = {
+    SignalType.ERROR_RATE: "error rate anomaly",
+    SignalType.LATENCY: "latency anomaly",
+    SignalType.SILENCE: "service went silent",
+    SignalType.NEW_PATTERN: "new error pattern",
+    SignalType.PATTERN_SURGE: "error pattern surge",
+}
+
+
+def priority_key(incident: IncidentSummary) -> tuple[int, int, int, float]:
+    """Sort key for the feed: open first, then severity, NEW-pattern incidents above
+    surge-only ones, then the most recent."""
+    return (
+        0 if incident.state is IncidentState.OPEN else 1,
+        -int(incident.current_severity),
+        0 if incident.has_new_pattern else 1,
+        -(incident.resolved_at or incident.opened_at),
+    )
+
+
+@dataclass
+class _Track:
+    """Per-service bookkeeping between ticks."""
+
+    streak: int = 0  # consecutive ticks with a qualifying signal (while no incident is open)
+    streak_started: float | None = None
+    pending: dict[SignalType, tuple[float, str]] = field(default_factory=dict)  # first sighting
+    calm_streak: int = 0  # consecutive calm ticks (while an incident is open)
+    silence_since: float | None = None
+
+
+@dataclass
+class _Meta:
+    seen_types: set[SignalType]
+    signature: tuple[Any, ...] | None = None
+
+
+class IncidentManager:
+    """Turns per-tick evaluations into a small number of meaningful incidents.
+
+    - **Persistence:** a service needs a signal on ``PERSIST_TICKS`` consecutive ticks.
+    - **One incident per service**, updated in place; incidents on connected services join one
+      correlation group (one outage = one group).
+    - **Hysteresis:** an incident resolves only after ``RESOLVE_TICKS`` consecutive calm ticks
+      (every z below ``RESOLVE_Z``, not just below the ``OPEN_Z`` that raised it).
+    - **Cooldown:** the same service anomalous again within ``COOLDOWN_SECONDS`` of resolving
+      reopens the same incident.
+    - **Notifications** are decided per group, never per service or per tick: open at HIGH+,
+      escalation into a higher HIGH/CRITICAL level, and the resolve of a group that notified.
+
+    While a service has an open incident its baseline is frozen; ``open_services()`` is what the
+    pipeline passes as ``frozen`` to the aggregator and detectors.
+    """
+
+    def __init__(
+        self,
+        clock: Clock,
+        aggregator: Aggregator,
+        baseline: Baseline,
+        graph: DependencyGraph,
+        *,
+        settings: Settings | None = None,
+        store: Store | None = None,
+    ) -> None:
+        self._clock = clock
+        self._agg = aggregator
+        self._baseline = baseline
+        self._settings = settings or get_settings()
+        self._store = store
+        self._engine = CorrelationEngine(graph, self._settings.CORRELATION_WINDOW_SECONDS)
+        self._incidents: dict[str, Incident] = {}
+        self._meta: dict[str, _Meta] = {}
+        self._open: dict[str, str] = {}  # service -> id of its open incident
+        self._last_resolved: dict[str, str] = {}  # service -> id of its latest resolved incident
+        self._tracks: dict[str, _Track] = {}
+        self._evidence: dict[str, dict[PatternKey, PatternRef]] = {}  # per group, at its worst
+        self._seq = 0
+        self.notifications_emitted = 0
+        # per-tick scratch
+        self._active_now: set[str] = set()
+        self._touched: dict[str, None] = {}
+        self._opened: dict[str, str] = {}
+        self._resolved: set[str] = set()
+        self._fresh_groups: set[str] = set()
+
+    # ---- read API ---------------------------------------------------------------------
+
+    def open_services(self) -> set[str]:
+        """Services with an open incident: their baselines must not learn."""
+        return set(self._open)
+
+    def get(self, incident_id: str) -> Incident | None:
+        incident = self._incidents.get(incident_id)
+        return incident.model_copy(deep=True) if incident else None
+
+    def incidents(self, state: str = "all") -> list[Incident]:
+        """Copies, sorted by ``priority_key``. ``state``: open | resolved | all."""
+        wanted = {
+            "open": {IncidentState.OPEN},
+            "resolved": {IncidentState.RESOLVED},
+        }.get(state.lower(), set(IncidentState))
+        chosen = [i for i in self._incidents.values() if i.state in wanted]
+        return [i.model_copy(deep=True) for i in sorted(chosen, key=priority_key)]
+
+    def group(self, group_id: str) -> CorrelationGroup | None:
+        return self._engine.groups.get(group_id)
+
+    def group_incidents(self, group_id: str) -> list[Incident]:
+        group = self._engine.groups.get(group_id)
+        if group is None:
+            return []
+        return [self._incidents[m.incident_id].model_copy(deep=True) for m in group.members]
+
+    @property
+    def groups_opened(self) -> int:
+        """Distinct outages so far (merged groups count once): the "1 incident" of the demo."""
+        return len(self._engine.groups)
+
+    @staticmethod
+    def summary(incident: Incident) -> IncidentSummary:
+        return IncidentSummary(**{f: getattr(incident, f) for f in IncidentSummary.model_fields})
+
+    # ---- the tick ---------------------------------------------------------------------
+
+    def process(self, evaluations: Mapping[str, Evaluation]) -> list[IncidentEvent]:
+        """Advance every service one tick. Returns the state changes, in order."""
+        now = self._clock.now()
+        self._active_now = set()
+        self._touched = {}
+        self._opened = {}
+        self._resolved = set()
+        self._fresh_groups = set()
+
+        for service, ev in evaluations.items():
+            if not ev.ready:
+                continue
+            track = self._tracks.setdefault(service, _Track())
+            self._track_silence(track, ev, now)
+            incident_id = self._open.get(service)
+            if incident_id is None:
+                self._consider_open(service, ev, track, now)
+            else:
+                self._update_open(self._incidents[incident_id], ev, track, now)
+
+        self._refresh_groups(now)
+        notifies = self._settle_groups(now)
+        return self._build_events(now, notifies)
+
+    # ---- per-service state machine ----------------------------------------------------
+
+    @staticmethod
+    def _track_silence(track: _Track, ev: Evaluation, now: float) -> None:
+        if any(sig.type is SignalType.SILENCE for sig in ev.signals):
+            if track.silence_since is None:
+                track.silence_since = now
+        else:
+            track.silence_since = None
+
+    def _consider_open(self, service: str, ev: Evaluation, track: _Track, now: float) -> None:
+        if not ev.signals:  # any tick without a signal breaks the streak: that is persistence
+            track.streak = 0
+            track.streak_started = None
+            track.pending.clear()
+            return
+        track.streak += 1
+        if track.streak == 1:
+            track.streak_started = now
+        for sig in ev.signals:
+            track.pending.setdefault(sig.type, (now, sig.detail))
+        self._active_now.add(service)
+        if track.streak >= self._settings.PERSIST_TICKS:
+            self._open_incident(service, ev, track, now)
+
+    def _open_incident(self, service: str, ev: Evaluation, track: _Track, now: float) -> None:
+        last_id = self._last_resolved.get(service)
+        last = self._incidents.get(last_id) if last_id else None
+        cooldown = self._settings.COOLDOWN_SECONDS
+        if last is not None and last.resolved_at is not None and now - last.resolved_at <= cooldown:
+            incident = self._reopen(last, track, now)
+        else:
+            incident = self._create(service, track, now)
+
+        self._open[service] = incident.id
+        self._touched[incident.id] = None
+        incident.signals = list(ev.signals)
+        incident.peak_z = max([incident.peak_z, *(s.z for s in ev.signals)])
+        track.calm_streak = 0
+        track.pending.clear()
+        track.streak = 0
+
+        severity = self._severity_now(incident, now)
+        incident.current_severity = severity
+        incident.max_severity = max(incident.max_severity, severity)
+        incident.timeline.append(
+            TimelineEntry(
+                t=now, service=service, event=self._opened[incident.id], severity=severity
+            )
+        )
+
+    def _create(self, service: str, track: _Track, now: float) -> Incident:
+        self._seq += 1
+        incident_id = f"inc-{int(now)}-{self._seq}"
+        started = track.streak_started if track.streak_started is not None else now
+        member = Member(incident_id, service, opened_at=now, deviated_at=started)
+        group, moved = self._engine.join(member, now)
+        if len(group.members) == 1:
+            self._fresh_groups.add(group.id)
+        for moved_id in moved:  # groups merged: the absorbed incidents change group
+            absorbed = self._evidence.pop(self._incidents[moved_id].group_id, {})
+            merge_evidence(self._evidence.setdefault(group.id, {}), absorbed.values())
+            self._incidents[moved_id].group_id = group.id
+            self._touched[moved_id] = None
+        incident = Incident(
+            id=incident_id,
+            service=service,
+            group_id=group.id,
+            state=IncidentState.OPEN,
+            current_severity=Severity.LOW,
+            max_severity=Severity.LOW,
+            opened_at=now,
+            anomaly_started_at=started,
+        )
+        # The story starts when each signal type FIRST appeared, not when persistence let us in.
+        for kind, (t, detail) in sorted(track.pending.items(), key=lambda kv: kv[1][0]):
+            incident.timeline.append(
+                TimelineEntry(t=t, service=service, event=SIGNAL_LABELS[kind], detail=detail)
+            )
+        self._incidents[incident_id] = incident
+        self._meta[incident_id] = _Meta(seen_types=set(track.pending))
+        self._opened[incident_id] = "opened"
+        return incident
+
+    def _reopen(self, incident: Incident, track: _Track, now: float) -> Incident:
+        incident.state = IncidentState.OPEN
+        incident.resolved_at = None
+        incident.anomaly_started_at = track.streak_started or now
+        group = self._engine.groups.get(incident.group_id)
+        if group is not None and not group.is_open:
+            group.resolved_at = None
+            self._fresh_groups.add(group.id)
+        self._meta[incident.id].seen_types |= set(track.pending)
+        self._opened[incident.id] = "reopened"
+        return incident
+
+    def _update_open(self, incident: Incident, ev: Evaluation, track: _Track, now: float) -> None:
+        meta = self._meta[incident.id]
+        if ev.signals:
+            self._active_now.add(incident.service)
+            incident.signals = list(ev.signals)
+            incident.peak_z = max([incident.peak_z, *(s.z for s in ev.signals)])
+            for sig in ev.signals:
+                if sig.type not in meta.seen_types:
+                    meta.seen_types.add(sig.type)
+                    incident.timeline.append(
+                        TimelineEntry(
+                            t=now,
+                            service=incident.service,
+                            event=SIGNAL_LABELS[sig.type],
+                            severity=incident.current_severity,
+                            detail=sig.detail,
+                        )
+                    )
+
+        s = self._settings
+        calm = ev.is_calm(s.RESOLVE_Z, s.ABS_FLOOR_ERROR, s.SILENCE_RESOLVE_RATIO)
+        track.calm_streak = track.calm_streak + 1 if calm else 0
+        if track.calm_streak >= s.RESOLVE_TICKS:
+            self._resolve(incident, track, now)
+
+    def _resolve(self, incident: Incident, track: _Track, now: float) -> None:
+        incident.state = IncidentState.RESOLVED
+        incident.resolved_at = now
+        incident.duration_s = now - (incident.anomaly_started_at or incident.opened_at)
+        incident.timeline.append(
+            TimelineEntry(
+                t=now,
+                service=incident.service,
+                event="resolved",
+                severity=incident.current_severity,
+                detail=f"calm for {self._settings.RESOLVE_TICKS} consecutive ticks",
+            )
+        )
+        del self._open[incident.service]
+        self._last_resolved[incident.service] = incident.id
+        track.streak = track.calm_streak = 0
+        track.streak_started = None
+        track.pending.clear()
+        track.silence_since = None
+        self._resolved.add(incident.id)
+        self._touched[incident.id] = None
+
+    # ---- severity ---------------------------------------------------------------------
+
+    def _severity_now(self, incident: Incident, now: float) -> Severity:
+        group = self._engine.groups[incident.group_id]
+        anomalous = sum(
+            1 for m in group.members if self._incidents[m.incident_id].state is IncidentState.OPEN
+        )
+        silence_since = self._tracks[incident.service].silence_since
+        severity = compute_severity(
+            incident.signals,
+            error_rate=self._agg.window(incident.service).error_rate,
+            anomaly_duration_s=now - (incident.anomaly_started_at or incident.opened_at),
+            silence_duration_s=0.0 if silence_since is None else now - silence_since,
+            anomalous_services=max(anomalous, 1),
+            settings=self._settings,
+        )
+        return severity if severity is not None else incident.current_severity
+
+    def _apply_severity(self, incident: Incident, new: Severity, now: float) -> None:
+        old = incident.current_severity
+        if new == old:
+            return
+        incident.timeline.append(
+            TimelineEntry(
+                t=now,
+                service=incident.service,
+                event="escalated" if new > old else "de-escalated",
+                severity=new,
+                detail=f"{old.name} -> {new.name}",
+            )
+        )
+        if new > old:
+            incident.escalations.append(Escalation(t=now, from_severity=old, to_severity=new))
+        incident.current_severity = new
+        incident.max_severity = max(incident.max_severity, new)
+
+    # ---- group-level view: severity, origin, patterns, story --------------------------
+
+    def _refresh_groups(self, now: float) -> None:
+        s = self._settings
+        for group in self._engine.open_groups():
+            open_incidents = [
+                self._incidents[m.incident_id]
+                for m in group.members
+                if self._incidents[m.incident_id].state is IncidentState.OPEN
+            ]
+            if not open_incidents:
+                continue
+            # 1) severity first (it adds timeline entries the story must include)
+            for inc in open_incidents:
+                if inc.service in self._active_now:
+                    self._apply_severity(inc, self._severity_now(inc, now), now)
+
+            # 2) everything that is about the whole outage
+            origin = self._engine.origin(group)
+            impacted = [inc.service for inc in open_incidents]
+            # The window forgets an outage as it drains; the card keeps it as it was at its worst.
+            evidence = self._evidence.setdefault(group.id, {})
+            merge_evidence(
+                evidence, rank_patterns(impacted, self._agg, self._baseline, s, limit=None)
+            )
+            patterns = top_patterns(evidence)
+            silent = any(SignalType.SILENCE in self._meta[i.id].seen_types for i in open_incidents)
+            hint = hint_for(
+                patterns,
+                [g for i in open_incidents for g in i.signals],
+                self._agg,
+                s,
+                silent=silent,
+            )
+            blast = self._engine.blast_radius(origin, impacted)
+            story = sorted(
+                (e for m in group.members for e in self._incidents[m.incident_id].timeline),
+                key=lambda e: e.t,
+            )
+            affected = list(dict.fromkeys(group.services))
+
+            for inc in open_incidents:
+                window = self._agg.window(inc.service)
+                inc.origin = origin
+                inc.affected_services = affected
+                inc.blast_radius = blast
+                inc.patterns = patterns
+                inc.hint = hint
+                inc.story = story
+                inc.samples = self._samples(inc, patterns) or inc.samples
+                inc.failed_ops = window.errors
+                inc.duration_s = now - (inc.anomaly_started_at or inc.opened_at)
+                inc.what = self._what(inc) or inc.what
+                inc.title = f"{inc.service}: {inc.what}" if inc.what else inc.service
+                inc.has_new_pattern = SignalType.NEW_PATTERN in self._meta[inc.id].seen_types
+
+    def _samples(self, incident: Incident, patterns: Iterable[PatternRef]) -> list[str]:
+        own = {p.pattern_id for p in patterns if p.service == incident.service}
+        return self._agg.samples(incident.service, 3, own or None) or self._agg.samples(
+            incident.service, 3
+        )
+
+    @staticmethod
+    def _what(incident: Incident) -> str:
+        stat = [sig.detail for sig in incident.signals if sig.type in STATISTICAL_SIGNALS]
+        if stat:
+            return "; ".join(stat)
+        return incident.signals[0].detail if incident.signals else ""
+
+    # ---- resolution of groups and notifications ---------------------------------------
+
+    def _settle_groups(self, now: float) -> list[NotifyRequest]:
+        notifies: list[NotifyRequest] = []
+        for group in list(self._engine.groups.values()):
+            if not group.is_open:
+                continue
+            incidents = [self._incidents[m.incident_id] for m in group.members]
+            if all(i.state is IncidentState.RESOLVED for i in incidents):
+                group.resolved_at = now
+                if group.notified:
+                    peak = max(i.max_severity for i in incidents)
+                    notifies.append(self._notify("resolved", group, peak, now))
+                    group.notified, group.notified_severity = False, None
+                continue
+
+            level = max(i.current_severity for i in incidents if i.state is IncidentState.OPEN)
+            if level >= Severity.HIGH and (
+                group.notified_severity is None or level > group.notified_severity
+            ):
+                kind = "opened" if group.id in self._fresh_groups else "escalated"
+                group.notified, group.notified_severity = True, level
+                notifies.append(self._notify(kind, group, level, now))
+            for inc in incidents:
+                if inc.state is IncidentState.OPEN and inc.notified != group.notified:
+                    inc.notified = group.notified
+                    self._touched[inc.id] = None
+        self.notifications_emitted += len(notifies)
+        return notifies
+
+    def _notify(
+        self, kind: str, group: CorrelationGroup, severity: Severity, now: float
+    ) -> NotifyRequest:
+        origin = self._engine.origin(group)
+        member = next(m for m in group.members if m.service == origin)
+        card = self._incidents[member.incident_id]
+        stamp = datetime.fromtimestamp(now, UTC).strftime("%Y-%m-%d %H:%M:%SZ")
+        top = card.patterns[0] if card.patterns else None
+        lines = [
+            f"SentinelAI {severity.name} incident, origin {origin} ({kind})",
+            f"What: {card.what or 'n/a'}",
+            f"Affected: {', '.join(card.affected_services) or origin}",
+        ]
+        if top is not None:
+            tag = "NEW " if top.is_new else ""
+            lines.append(f"Top pattern: {tag}{top.template} (x{top.count}, {top.service})")
+        lines.append(f"Probable cause (hint): {card.hint}")
+        lines.append(f"Incident {card.id} / group {group.id} at {stamp}")
+        subject = (
+            f"[SentinelAI] RESOLVED: {origin}"
+            if kind == "resolved"
+            else f"[SentinelAI] {severity.name}: {origin} incident"
+        )
+        payload: dict[str, Any] = {
+            "kind": kind,
+            "incident_id": card.id,
+            "group_id": group.id,
+            "severity": severity.name,
+            "origin": origin,
+            "affected_services": card.affected_services,
+            "what": card.what,
+            "hint": card.hint,
+            "patterns": [p.model_dump() for p in card.patterns],
+            "opened_at": group.opened_at,
+            "at": now,
+        }
+        return NotifyRequest(
+            kind=kind,  # type: ignore[arg-type]
+            incident_id=card.id,
+            group_id=group.id,
+            severity=severity,
+            subject=subject[:100],
+            body="\n".join(lines),
+            payload=payload,
+        )
+
+    # ---- events and persistence -------------------------------------------------------
+
+    def _signature(self, inc: Incident) -> tuple[Any, ...]:
+        return (
+            inc.state,
+            inc.current_severity,
+            inc.origin,
+            tuple(inc.affected_services),
+            tuple(sorted((p.service, p.pattern_id) for p in inc.patterns)),
+            inc.hint,
+            inc.notified,
+            len(inc.timeline),
+        )
+
+    def _build_events(self, now: float, notifies: list[NotifyRequest]) -> list[IncidentEvent]:
+        by_incident = {n.incident_id: n for n in notifies}
+        for incident_id in by_incident:
+            self._touched[incident_id] = None
+        for incident in self._incidents.values():  # open incidents whose card moved
+            if incident.state is IncidentState.OPEN:
+                meta = self._meta[incident.id]
+                if meta.signature != self._signature(incident):
+                    self._touched[incident.id] = None
+
+        events: list[IncidentEvent] = []
+        for incident_id in self._touched:
+            incident = self._incidents[incident_id]
+            meta = self._meta[incident_id]
+            previous = meta.signature
+            meta.signature = self._signature(incident)
+            if incident_id in self._resolved:
+                kind, transition = "resolved", "resolved"
+            elif incident_id in self._opened:
+                kind, transition = "opened", self._opened[incident_id]
+            else:
+                kind = "updated"
+                transition = (
+                    "severity_changed"
+                    if previous is not None and previous[1] != incident.current_severity
+                    else "updated"
+                )
+            event = IncidentEvent(
+                kind=kind,  # type: ignore[arg-type]
+                transition=transition,
+                incident=incident.model_copy(deep=True),
+                notify=by_incident.get(incident_id),
+            )
+            events.append(event)
+            self._persist(event, now)
+        return events
+
+    def _persist(self, event: IncidentEvent, now: float) -> None:
+        if self._store is None:
+            return
+        try:
+            incident = event.incident
+            self._store.upsert_incident(incident)
+            self._store.add_event(
+                incident.id, now, event.transition, incident.current_severity, incident
+            )
+        except Exception as exc:  # the audit trail must never stop monitoring
+            logger.warning("store write failed: %s", type(exc).__name__)

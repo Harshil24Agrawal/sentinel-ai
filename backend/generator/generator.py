@@ -30,9 +30,19 @@ class _Run:
     started_at: float
 
 
+_second_prefix: dict[int, str] = {}  # whole second -> "YYYY-MM-DDTHH:MM:SS." (a line-rate cache)
+
+
 def format_ts(epoch: float) -> str:
-    dt = datetime.fromtimestamp(epoch, UTC)
-    return dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z"
+    whole = int(epoch)
+    prefix = _second_prefix.get(whole)
+    if prefix is None:
+        if len(_second_prefix) > 4096:
+            _second_prefix.clear()
+        prefix = _second_prefix[whole] = datetime.fromtimestamp(whole, UTC).strftime(
+            "%Y-%m-%dT%H:%M:%S."
+        )
+    return f"{prefix}{int((epoch - whole) * 1000):03d}Z"
 
 
 class LogGenerator:

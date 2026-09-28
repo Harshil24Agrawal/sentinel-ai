@@ -89,6 +89,7 @@ class PatternRef(BaseModel):
     expected_per_min: float = 0.0
     is_new: bool = False
     surge_ratio: float | None = None
+    service: str = ""
 
 
 class TimelineEntry(BaseModel):
@@ -174,6 +175,29 @@ class Incident(IncidentSummary):
     what_if: WhatIf | None = None
     ml_score: float | None = None
     notified: bool = False
+    anomaly_started_at: float | None = None  # first tick of the qualifying streak
+
+
+class NotifyRequest(BaseModel):
+    """A notification the incident manager wants sent (SNS-eligible: HIGH+ open/escalation,
+    or the resolve of a group that notified). CloudWatch gets every IncidentEvent instead."""
+
+    kind: Literal["opened", "escalated", "resolved"]
+    incident_id: str  # the group's origin incident
+    group_id: str
+    severity: Severity
+    subject: str
+    body: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class IncidentEvent(BaseModel):
+    """One state change of one incident, in the order it happened."""
+
+    kind: Literal["opened", "updated", "resolved"]
+    transition: str = ""  # "opened", "reopened", "severity_changed", "resolved", ...
+    incident: Incident
+    notify: NotifyRequest | None = None
 
 
 class NotificationEvent(BaseModel):

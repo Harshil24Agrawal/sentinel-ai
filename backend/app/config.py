@@ -44,13 +44,16 @@ class Settings(BaseSettings):
     LATENCY_MIN_SAMPLES: int = 20
     LATENCY_MIN_RATIO: float = 1.5
     SILENCE_RATIO: float = 0.2
+    # A silent service is released once its recent volume is back to this share of normal
+    # (opens below 20%, closes at 50%: a ratio, because volume z is too noisy to release on).
+    SILENCE_RESOLVE_RATIO: float = 0.5
     SURGE_RATIO: float = 5.0
     SURGE_MIN_COUNT: int = 10
     NEW_PATTERN_MIN_COUNT: int = 3
 
-    # Silence looks at the last N seconds of the window; 60 (= WINDOW_SECONDS) is the spec's
-    # "window volume < 20% of median". Lower it (e.g. 20) to detect silence sooner.
-    SILENCE_LOOKBACK_SECONDS: int = 60
+    # Silence looks at the last N seconds of the window. 60 (= WINDOW_SECONDS) is the spec's
+    # literal "window volume < 20% of median" (~48s to fire); 20 fires in ~16s.
+    SILENCE_LOOKBACK_SECONDS: int = 20
     MAX_PATTERNS_PER_SERVICE: int = 1000  # bounds first-seen/rate tracking per service
 
     # Severity (§6.9)
@@ -60,6 +63,10 @@ class Settings(BaseSettings):
     SEVERITY_LONG_ANOMALY_SECONDS: int = 120
     CRITICAL_ERROR_RATE: float = 0.25
     CRITICAL_SILENCE_SECONDS: int = 30
+
+    # Extra probable-cause rules as (regex, hint) pairs, checked before the built-in ones.
+    # JSON in the environment, e.g. HINT_RULES_EXTRA='[["cert|tls","Check TLS certificates."]]'
+    HINT_RULES_EXTRA: list[tuple[str, str]] = []
 
     # Baseline floors (added to 1.4826 * MAD)
     ERROR_RATE_FLOOR: float = 0.005

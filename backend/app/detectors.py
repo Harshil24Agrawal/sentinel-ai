@@ -27,10 +27,15 @@ class Evaluation:
     error_delta: float | None = None  # window error rate minus baseline median
     latency_z: float | None = None
     shortfall_z: float | None = None  # how far volume is BELOW normal (positive = lower)
+    volume_ratio: float | None = None  # recent volume / expected volume (1.0 = normal)
 
-    def is_calm(self, resolve_z: float, abs_floor_error: float) -> bool:
+    def is_calm(
+        self, resolve_z: float, abs_floor_error: float, silence_resolve_ratio: float = 0.5
+    ) -> bool:
         """True when every detector is back near normal (used for hysteresis, so the bar is
-        RESOLVE_Z, lower than the OPEN_Z that raised the alarm)."""
+        RESOLVE_Z, lower than the OPEN_Z that raised the alarm). Volume is released on a ratio
+        rather than a z: a busy service's window volume is noisier than its (short-history)
+        MAD suggests, and a z-based release kept resetting the calm streak."""
         if not self.ready or self.signals:
             return False
         if self.error_z is not None and self.error_z >= resolve_z:
@@ -39,7 +44,7 @@ class Evaluation:
             return False
         if self.latency_z is not None and self.latency_z >= resolve_z:
             return False
-        return not (self.shortfall_z is not None and self.shortfall_z >= resolve_z)
+        return not (self.volume_ratio is not None and self.volume_ratio < silence_resolve_ratio)
 
 
 class Detectors:
@@ -82,10 +87,12 @@ class Detectors:
         signals: list[Signal] = []
         error_z, error_delta = self._error_rate(service, window, signals)
         latency_z = self._latency(service, window, signals)
-        shortfall_z = self._silence(service, signals)
+        shortfall_z, volume_ratio = self._silence(service, signals)
         if window.volume >= self._settings.MIN_VOLUME:  # tiny samples never page anyone
             self._patterns(service, window, signals)
-        return Evaluation(service, True, signals, error_z, error_delta, latency_z, shortfall_z)
+        return Evaluation(
+            service, True, signals, error_z, error_delta, latency_z, shortfall_z, volume_ratio
+        )
 
     # ---- individual detectors ---------------------------------------------------------
 
@@ -135,7 +142,7 @@ class Detectors:
             )
         return z
 
-    def _silence(self, service: str, out: list[Signal]) -> float | None:
+    def _silence(self, service: str, out: list[Signal]) -> tuple[float | None, float | None]:
         """Lines in the lookback (default: the whole window) below SILENCE_RATIO of normal.
 
         ``Signal.z`` is the shortfall in robust units, oriented so bigger = worse.
@@ -143,7 +150,7 @@ class Detectors:
         s = self._settings
         median = self._baseline.median(service, VOLUME)
         if median is None or median < s.MIN_VOLUME:
-            return None
+            return None, None
         lookback = min(s.SILENCE_LOOKBACK_SECONDS, s.WINDOW_SECONDS)
         fraction = lookback / s.WINDOW_SECONDS
         expected = median * fraction
@@ -163,7 +170,7 @@ class Detectors:
                     ),
                 )
             )
-        return z
+        return z, recent / expected
 
     def _patterns(self, service: str, w: WindowStats, out: list[Signal]) -> None:
         """NEW: first seen after warm-up. SURGE: far above the pattern's long-run rate.

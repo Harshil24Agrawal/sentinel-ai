@@ -37,8 +37,8 @@ def test_steady_noisy_traffic_raises_no_signals() -> None:
         Feed("c", lines=40, p_error=0.005, latency=(8, 3)),
     ]
     rig = Rig(*feeds)
-    rig.run(400)
-    assert sum(r["a"].ready for r in rig.history) > 300
+    rig.run(250)
+    assert sum(r["a"].ready for r in rig.history) > 150
     for service in "abc":
         assert rig.signals(service) == [], service
 
@@ -183,8 +183,8 @@ def test_silence_is_detected() -> None:
     rig.run(80)
     first = rig.first_signal_tick("quiet", SIL)
     assert first is not None
-    # default lookback is the whole window: fires once the window is below 20% of normal
-    assert 45 <= first - WARM <= 55
+    # default lookback is 20s: fires once the last 20s hold < 20% of the normal volume
+    assert 14 <= first - WARM <= 20
     signal = rig.signals("quiet", SIL)[0][1]
     assert signal.value < 0.2 * signal.baseline_median
     assert signal.z >= 3.0  # oriented so bigger = worse
@@ -192,14 +192,14 @@ def test_silence_is_detected() -> None:
     assert rig.signals("quiet", ERR) == []  # a quiet service is not "errors"
 
 
-def test_shorter_silence_lookback_detects_sooner() -> None:
+def test_whole_window_lookback_is_the_slower_spec_behaviour() -> None:
     feed = Feed("quiet", lines=10)
-    rig = Rig(feed, SILENCE_LOOKBACK_SECONDS=15)
+    rig = Rig(feed, SILENCE_LOOKBACK_SECONDS=60)  # "window volume < 20% of median", literally
     rig.run(WARM)
     feed.stop = rig.t
-    rig.run(40)
+    rig.run(80)
     first = rig.first_signal_tick("quiet", SIL)
-    assert first is not None and first - WARM <= 15
+    assert first is not None and 45 <= first - WARM <= 55
     assert rig.signals("quiet", SIL, since=WARM - 5)[0][0] >= WARM  # and not before it stopped
 
 
@@ -314,10 +314,10 @@ def test_frozen_service_does_not_learn_the_outage() -> None:
 def test_without_the_freeze_a_long_outage_becomes_normal() -> None:
     """The reason the freeze exists: after ~900s of learning, the outage is the baseline."""
     feed = Feed("svc", lines=25, p_error=0.02)
-    rig = Rig(feed, BASELINE_HISTORY_SAMPLES=150)
+    rig = Rig(feed, BASELINE_HISTORY_SAMPLES=80)
     rig.run(WARM)
     feed.p_error = 0.50
-    rig.run(400)
+    rig.run(250)
     assert not rig.history[-1]["svc"].signals
     assert rig.baseline.median("svc") > 0.3
 

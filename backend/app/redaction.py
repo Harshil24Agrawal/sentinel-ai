@@ -31,6 +31,8 @@ class Redactor:
         )
         alt = "|".join(re.escape(k) for k in keys)
         already = re.escape(REDACTED)
+        # Nearly every line has no PHI key at all; this one search lets it skip the three below.
+        self._has_key = re.compile(alt, re.IGNORECASE)
         # key="value" / key='value'
         self._kv_quoted = re.compile(
             rf"""(?P<pre>(?<!\w)(?:{alt})\s*=\s*)(?!["']{already}["'])(?:"[^"]*"|'[^']*')""",
@@ -70,12 +72,13 @@ class Redactor:
         same line (parsed message vs raw) without counting the same PHI twice.
         """
         count = 0
-        text, n = self._kv_quoted.subn(lambda m: m["pre"] + REDACTED, text)
-        count += n
-        text, n = self._kv_bare.subn(lambda m: m["pre"] + REDACTED, text)
-        count += n
-        text, n = self._json.subn(lambda m: m["pre"] + f'"{REDACTED}"', text)
-        count += n
+        if self._has_key.search(text):
+            text, n = self._kv_quoted.subn(lambda m: m["pre"] + REDACTED, text)
+            count += n
+            text, n = self._kv_bare.subn(lambda m: m["pre"] + REDACTED, text)
+            count += n
+            text, n = self._json.subn(lambda m: m["pre"] + f'"{REDACTED}"', text)
+            count += n
         text, n = self._pattern_based.subn(REDACTED, text)
         count += n
         if track:
