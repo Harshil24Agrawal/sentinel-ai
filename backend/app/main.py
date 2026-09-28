@@ -7,14 +7,17 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.api import routes, ws
 from app.config import Settings, get_settings
 from app.pipeline import Pipeline
 
+DEFAULT_FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
 _STANDARD_RECORD_KEYS = set(logging.LogRecord("", 0, "", 0, "", (), None).__dict__) | {"message"}
 
 
@@ -76,6 +79,10 @@ def create_app(
     )
     app.include_router(routes.router)
     app.include_router(ws.router)
+    # Last, so /api/* and /ws win: the dashboard is served from the same origin at /
+    frontend = Path(settings.FRONTEND_DIR) if settings.FRONTEND_DIR else DEFAULT_FRONTEND_DIR
+    if (frontend / "index.html").is_file():
+        app.mount("/", StaticFiles(directory=frontend, html=True), name="frontend")
     return app
 
 

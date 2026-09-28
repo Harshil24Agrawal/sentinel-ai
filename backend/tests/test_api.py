@@ -270,6 +270,7 @@ def live_settings(tmp_path: Path, **overrides: object):  # type: ignore[no-untyp
         "TICK_SECONDS": 0.05,
         "LOG_PATH": str(tmp_path / "app.log"),
         "DB_PATH": str(tmp_path / "sentinel.db"),
+        "DRYRUN_PATH": str(tmp_path / "notifications.jsonl"),
         "GENERATOR_ENABLED": False,
     }
     return make_settings(**{**values, **overrides})
@@ -336,3 +337,36 @@ def test_a_running_pipeline_reads_lines_from_the_log_file(tmp_path: Path) -> Non
                 if volume >= 20:
                     break
     assert volume >= 20
+
+
+# ---- the dashboard is served from the same origin ---------------------------------------
+
+
+def test_frontend_index_is_served_at_the_root(tmp_path: Path) -> None:
+    (tmp_path / "index.html").write_text(
+        "<html><title>SentinelAI dashboard</title></html>", encoding="utf-8"
+    )
+    rig = LineRig(store=False, FRONTEND_DIR=str(tmp_path))
+    client = client_for(rig)
+    page = client.get("/")
+    assert page.status_code == 200 and "SentinelAI dashboard" in page.text
+    assert page.headers["content-type"].startswith("text/html")
+    assert client.get("/api/health").json()["status"] == "ok"  # the API still wins
+    assert client.get("/no-such-file.js").status_code == 404
+
+
+def test_root_is_a_404_when_there_is_no_frontend(tmp_path: Path) -> None:
+    assert client_for(LineRig(store=False, FRONTEND_DIR=str(tmp_path))).get("/").status_code == 404
+
+
+def test_the_repos_own_frontend_is_served_by_default() -> None:
+    from app.main import DEFAULT_FRONTEND_DIR
+
+    if not (DEFAULT_FRONTEND_DIR / "index.html").is_file():
+        pytest.skip("no frontend/index.html in this checkout")
+    client = client_for(LineRig(store=False))
+    page = client.get("/")
+    assert page.status_code == 200 and page.text == (DEFAULT_FRONTEND_DIR / "index.html").read_text(
+        encoding="utf-8"
+    )
+    assert client.get("/api/services").status_code == 200

@@ -103,6 +103,16 @@ def test_notifications_are_dry_run_and_at_most_three(outage_run: LineRig) -> Non
     assert all("Probable cause" in n["body"] for n in log if n["kind"] != "resolved")
 
 
+def test_state_changes_and_notifications_reach_the_notifier(outage_run: LineRig) -> None:
+    queued = list(outage_run.pipeline.notifier.queue._queue)  # nothing is draining it here
+    sns = [q for q in queued if q.sns]
+    state_changes = [q for q in queued if not q.sns]
+    assert len(sns) == len(outage_run.of_type("notification"))  # SNS: only the notifications
+    assert all(q.subject.startswith("[SentinelAI]") for q in sns)
+    assert state_changes and all(q.record["channel"] == "cloudwatch" for q in state_changes)
+    assert {q.record["type"] for q in state_changes} >= {"incident_opened", "incident_resolved"}
+
+
 def test_the_card_names_the_pattern_and_the_probable_cause(outage_run: LineRig) -> None:
     card = outage_run.pipeline.manager.group_card(outage_run.of_type("incident_opened")[0]["id"])
     assert card is not None

@@ -32,6 +32,7 @@ from app.models import (
     Stats,
 )
 from app.naive import NaiveDetector
+from app.notifier.dispatcher import Notifier
 from app.parser import LogParser
 from app.redaction import Redactor
 from app.store import Store
@@ -110,6 +111,7 @@ class Pipeline:
             explainer=explainer,
         )
         self.naive = NaiveDetector(clock, self.aggregator, settings)
+        self.notifier = Notifier(settings, self.redactor, on_failure=self._notification_failed)
 
         self.queue: asyncio.Queue[str] = asyncio.Queue(maxsize=MAX_LINES_PER_TICK)
         self.collector = LogCollector(
@@ -160,6 +162,7 @@ class Pipeline:
         ]
         if self.generator is not None:
             self._tasks.append(asyncio.create_task(self.generator.run(), name="generator"))
+        self.notifier.start()
 
     async def stop(self) -> None:
         """Cancel the tasks, wait for them, and close the store."""
@@ -167,6 +170,7 @@ class Pipeline:
             task.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks = []
+        await self.notifier.stop()  # flush what is queued before the store closes
         if self.store is not None:
             self.store.close()
 
@@ -297,7 +301,7 @@ class Pipeline:
         return {
             "status": "ok",
             "uptime_s": round(self.clock.now() - self.started_at, 1),
-            "aws": "live" if self.settings.AWS_ENABLED else "dryrun",
+            "aws": self.notifier.mode,
             "llm": self.settings.LLM_PROVIDER,
         }
 
@@ -368,16 +372,36 @@ class Pipeline:
                 kind = "incident_updated"
             messages.append({"type": kind, "data": summary.model_dump(mode="json")})
             for event in group_events:
+                self._queue_state_change(kind, event, summary)
                 if event.notify is not None:
                     messages.append(self._notification_message(event.notify, group_id))
         return messages
 
+    def _queue_state_change(self, kind: str, event: IncidentEvent, summary: Any) -> None:
+        """Every incident state change goes to the notifier (CloudWatch + the dry-run file)."""
+        self.notifier.submit(
+            {
+                "ts": self.clock.now(),
+                "channel": "cloudwatch",
+                "type": kind,
+                "transition": event.transition,
+                "group_id": summary.id,
+                "incident_id": event.incident.id,
+                "service": event.incident.service,
+                "state": event.incident.state.value,
+                "severity": event.incident.current_severity.name,
+                "origin": summary.origin,
+                "title": summary.title,
+            }
+        )
+
     def _notification_message(self, request: NotifyRequest, group_id: str) -> dict[str, Any]:
-        """Placeholder until Phase 6: every notification is a dry run (nothing is sent to AWS)."""
+        """Queue an SNS-eligible notification and announce it on the WebSocket. The send itself
+        happens in the notifier's worker; a failure there is announced by a second message."""
         self.notifications.append(
             {
                 "ts": self.clock.now(),
-                "channel": "dryrun",
+                "channel": self.notifier.mode if self.notifier.mode == "live" else "dryrun",
                 "kind": request.kind,
                 "group_id": group_id,
                 "severity": request.severity.name,
@@ -385,12 +409,47 @@ class Pipeline:
                 "body": request.body,
             }
         )
-        return {
-            "type": "notification",
-            "data": {
-                "channel": "dryrun",
-                "incident_id": group_id,
+        self.notifier.submit(
+            {
+                "ts": self.clock.now(),
+                "channel": "sns",
+                "type": "notification",
+                "kind": request.kind,
+                "group_id": group_id,
+                "incident_id": request.incident_id,
                 "severity": request.severity.name,
-                "ok": True,
+                "subject": request.subject,
+                "body": request.body,
+                "payload": request.payload,
             },
+            sns=True,
+            subject=request.subject,
+            body=request.body,
+        )
+        return {"type": "notification", "data": self._notification_data(group_id, request, True)}
+
+    def _notification_data(self, group_id: str, request: NotifyRequest, ok: bool) -> dict[str, Any]:
+        return {
+            "channel": "sns" if self.notifier.mode == "live" else "dryrun",
+            "incident_id": group_id,
+            "severity": request.severity.name,
+            "ok": ok,
         }
+
+    def _notification_failed(self, item: Any) -> None:
+        """Called from the notifier's worker thread after every retry failed."""
+        record = item.record
+        if record.get("channel") != "sns":
+            return
+        self.errors["notify"] += 1
+        self.hub.publish(
+            {
+                "type": "notification",
+                "data": {
+                    "channel": "sns",
+                    "incident_id": record.get("group_id"),
+                    "severity": record.get("severity"),
+                    "ok": False,
+                },
+            }
+        )

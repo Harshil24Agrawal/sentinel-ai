@@ -106,6 +106,7 @@ class Settings(BaseSettings):
     CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]  # Vite dev server
     HISTORY_SECONDS: int = 300  # metrics frames kept for GET /api/metrics/history
     LOG_LEVEL: str = "INFO"
+    FRONTEND_DIR: str = ""  # default: <repo>/frontend, served at /
 
     # Built-in synthetic traffic
     GENERATOR_ENABLED: bool = True
