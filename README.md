@@ -79,8 +79,8 @@ Every notification payload is appended, as one JSON line, to `data/notifications
 (payloads are redacted a second time on the way out, and this file is written in **every** mode
 — live or dry-run — as a local backup audit trail). That is the default and needs no AWS.
 
-CloudWatch Logs (every incident state change) and SNS (HIGH/CRITICAL opens and escalations, and
-the resolve of a group that notified) are used **only** when `AWS_ENABLED=true` **and** the
+CloudWatch Logs (state changes only — see below) and SNS (HIGH/CRITICAL opens and escalations,
+and the resolve of a group that notified) are used **only** when `AWS_ENABLED=true` **and** the
 startup self-check passes. On boot the notifier: (1) calls `sts:GetCallerIdentity` to verify
 credentials, (2) creates the CloudWatch log group/stream if missing, (3) calls
 `sns:GetTopicAttributes` on `SNS_TOPIC_ARN`. Each check is independent — CloudWatch failing does
@@ -102,6 +102,7 @@ CW_LOG_GROUP=/sentinel-ai/incidents
 CW_LOG_STREAM=demo
 SNS_TOPIC_ARN=arn:aws:sns:us-east-1:<account-id>:<topic>
 DASHBOARD_URL=http://localhost:8000   # linked from SNS notification bodies
+DISPLAY_TIMEZONE=Asia/Kolkata         # human-facing times in the SNS body; CloudWatch stays UTC
 ```
 
 Never put access keys in `.env`; point `AWS_PROFILE` at a named profile (e.g. one set up with
@@ -109,12 +110,25 @@ Never put access keys in `.env`; point `AWS_PROFILE` at a named profile (e.g. on
 
 ### CloudWatch event schema
 
-Every incident state change and notification is one JSON log event with this fixed set of top-
-level fields — a stable contract to write Logs Insights queries against:
+CloudWatch gets **state changes only**, not every tick an incident stays open: the per-tick
+detail (patterns, samples, hint, the full timeline) lives in the local SQLite store instead
+(`incidents`, `incident_events`), which is the audit trail of record. The six event types:
+
+| `event` | fires on |
+|---|---|
+| `incident_opened` | a service's incident opens for the first time |
+| `incident_reopened` | a resolved incident re-opens within `COOLDOWN_SECONDS` |
+| `incident_escalated` | a service's current severity increases |
+| `incident_resolved` | a service's incident resolves (hysteresis held for `RESOLVE_TICKS`) |
+| `notification` | an SNS-eligible send went out (open/escalate at HIGH+, or a notified resolve) |
+| `test` | `POST /api/aws/test` |
+
+Every event is one JSON log message with this fixed set of top-level fields — a stable contract
+to write Logs Insights queries against:
 
 | field | meaning |
 |---|---|
-| `event` | `incident_opened` \| `incident_updated` \| `incident_resolved` \| `notification` \| `test` |
+| `event` | one of the six values above |
 | `incident_id` | the member (per-service) incident id |
 | `group_id` | the correlation group id (one outage) |
 | `service` | the service the event is about |
@@ -123,17 +137,28 @@ level fields — a stable contract to write Logs Insights queries against:
 | `error_rate` | the triggering signal's current value (null if not an error-rate signal) |
 | `baseline` | that signal's baseline median (null if none) |
 | `z` | that signal's robust z-score (null if none) |
-| `timestamp` | epoch seconds (float) |
+| `timestamp` | epoch seconds (float), UTC |
 
 Example Logs Insights query — CRITICAL opens in the last day:
 `fields @timestamp, service, origin, error_rate, baseline, z | filter event = "incident_opened" and severity = "CRITICAL" | sort @timestamp desc`
 
 ### Readable SNS notifications
 
-Subject: `[<SEVERITY>] SentinelAI: <origin> outage, <N> services affected` (or `[RESOLVED] ...
-recovered, ...` on resolve). Plain-text body: WHAT / HOW BAD / AFFECTED / PROBABLE CAUSE / HINT /
-TIMELINE (last 8 entries) / a link to `DASHBOARD_URL`. Redacted a second time on the way out
-(defense in depth) and well under SNS's 256 KB message limit.
+Written for a phone screen. Subject (ASCII, under 100 chars) carries severity and title, so the
+body does not repeat them: `[<SEVERITY>] <origin> <slowdown|errors|outage|anomaly> - <N> services
+affected` (or `[RESOLVED] ...` on resolve). The title word (slowdown/errors/outage/anomaly) is
+based on every signal type the incident has ever shown, not just this tick's, so it stays the
+same word across open, escalate and resolve. Body sections: started-at (`DISPLAY_TIMEZONE`) /
+still-active, CHECK FIRST (a shortened, imperative version of the hint — e.g. "Check the
+database: health, latency, connection pool." — plus the top pattern as a readable quoted phrase),
+WHAT'S WRONG (a plain-language multiplier, e.g. "Error rate 3x normal (7% vs 2%)" or "15x slower
+than normal (185 ms vs 12 ms)" — no z-scores), AFFECTED (one service per line, origin marked),
+WHAT HAPPENED (at most 4 deduplicated key moments from the origin's own timeline, with seconds so
+escalations landing in the same minute are still distinguishable), then the dashboard link and
+`Ref: <group id>` at the very bottom. A resolve notification is a single short summary line
+instead: `RESOLVED: <title>. Lasted <duration>. Peak: <severity>. Affected: <services>. No action
+needed.` Redacted a second time on the way out (defense in depth) and well under SNS's 256 KB
+message limit.
 
 Least-privilege IAM policy for the `sentinel-ai` user (replace the account id, region, group and
 topic):

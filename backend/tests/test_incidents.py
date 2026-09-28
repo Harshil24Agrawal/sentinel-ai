@@ -368,12 +368,32 @@ def test_notification_carries_a_compact_redacted_card() -> None:
     h = Harness()
     h.run(5, {"a": Z_HIGH})
     (note,) = h.notifies()
-    assert note.subject.startswith("[HIGH] SentinelAI: a outage")
-    assert len(note.subject) <= 100  # SNS subject limit
-    assert "WHAT: error rate 30.0% vs normal 2.0%" in note.body
-    assert "HINT:" in note.body
+    assert note.subject == "[HIGH] a errors - 1 service affected"
+    assert len(note.subject) <= 100 and note.subject.isascii()  # SNS subject limit
+    assert "HIGH: a errors" not in note.body  # severity/title are the subject; not repeated
+    assert note.body.startswith("Started ")
+    assert "CHECK FIRST:" in note.body
+    assert "WHAT'S WRONG:" in note.body
+    assert "Error rate 15x normal (30% vs 2%)" in note.body
+    assert "AFFECTED:" in note.body and "- a (origin)" in note.body
+    assert "WHAT HAPPENED:" in note.body
+    assert f"Ref: {h.incident('a').group_id}" in note.body
     assert note.payload["origin"] == "a" and note.payload["severity"] == "HIGH"
     assert note.incident_id == h.incident("a").id
+
+
+def test_resolve_notification_is_a_short_summary_line() -> None:
+    h = Harness()
+    h.run(5, {"a": Z_HIGH})
+    h.run(3, {"a": Z_CRIT})  # escalate to CRITICAL before recovering, for the "Peak:" line
+    h.run(30, {"a": 0.0})
+    notes = h.notifies()
+    resolved = next(n for n in notes if n.kind == "resolved")
+    assert resolved.subject == "[RESOLVED] a errors - 1 service affected"
+    flat = resolved.body.replace("\n", " ")  # summary line is word-wrapped for a phone screen
+    assert flat.startswith("RESOLVED: a errors. Lasted ")
+    assert "Peak: CRITICAL. Affected: a. No action needed." in flat
+    assert f"Ref: {h.incident('a').group_id}" in resolved.body
 
 
 def test_full_lifecycle_notifies_at_most_three_times() -> None:

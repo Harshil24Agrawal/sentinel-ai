@@ -362,6 +362,19 @@ class Pipeline:
 
     # ---- outgoing messages ------------------------------------------------------------
 
+    # A member incident's ``transition`` (CLAUDE.md §6.10's state machine) maps to a CloudWatch
+    # event name. Only these four are state changes; a bare "updated" (patterns/samples/hint
+    # refreshed with no severity change) fires every tick an incident is open and is deliberately
+    # left out -- it belongs in the local SQLite store (the full per-tick detail), not paged out
+    # to CloudWatch on every tick. The full CloudWatch event vocabulary is these four, plus
+    # "notification" (an SNS-eligible send) and "test" (POST /api/aws/test).
+    _CLOUDWATCH_EVENT_NAMES = {
+        "opened": "incident_opened",
+        "reopened": "incident_reopened",
+        "severity_changed": "incident_escalated",
+        "resolved": "incident_resolved",
+    }
+
     def _event_messages(self, events: list[IncidentEvent]) -> list[dict[str, Any]]:
         """Turn per-service incident events into ONE message per affected group."""
         by_group: dict[str, list[IncidentEvent]] = {}
@@ -383,10 +396,23 @@ class Pipeline:
                 kind = "incident_updated"
             messages.append({"type": kind, "data": summary.model_dump(mode="json")})
             for event in group_events:
-                self._queue_state_change(kind, event, summary)
+                cw_event = self._CLOUDWATCH_EVENT_NAMES.get(event.transition)
+                if cw_event == "incident_escalated" and self._is_deescalation(event.incident):
+                    cw_event = None  # a severity DROP that didn't fully resolve: not page-worthy
+                if cw_event is not None:
+                    self._queue_state_change(cw_event, event, summary)
                 if event.notify is not None:
                     messages.append(self._notification_message(event.notify, group_id))
         return messages
+
+    @staticmethod
+    def _is_deescalation(incident: Incident) -> bool:
+        """True when this tick's severity_changed transition was a DROP, not a rise. Severity
+        is recomputed every tick from live z-scores, so it can dip without the incident actually
+        resolving; ``_apply_severity`` appends "escalated" or "de-escalated" as the last timeline
+        entry this tick, whichever it was, so it is the reliable signal here (not the current
+        severity level alone)."""
+        return bool(incident.timeline) and incident.timeline[-1].event == "de-escalated"
 
     @staticmethod
     def _peak_signal(incident: Incident) -> tuple[float | None, float | None, float | None]:
@@ -398,15 +424,16 @@ class Pipeline:
         sig = sig or max(incident.signals, key=lambda s: s.z)
         return sig.value, sig.baseline_median, sig.z
 
-    def _queue_state_change(self, kind: str, event: IncidentEvent, summary: Any) -> None:
-        """Every incident state change goes to the notifier (CloudWatch + the dry-run file).
-        Field names are a small, stable contract for CloudWatch Logs Insights queries: event,
-        incident_id, group_id, service, severity, origin, error_rate, baseline, z, timestamp."""
+    def _queue_state_change(self, event_name: str, event: IncidentEvent, summary: Any) -> None:
+        """A real state change (open/reopen/escalate/resolve) goes to the notifier (CloudWatch +
+        the dry-run file). Field names are a small, stable contract for CloudWatch Logs Insights
+        queries: event, incident_id, group_id, service, severity, origin, error_rate, baseline,
+        z, timestamp. The full per-tick detail (patterns, samples, hint) lives in SQLite, not
+        here -- see docs/DESIGN.md."""
         error_rate, baseline, z = self._peak_signal(event.incident)
         self.notifier.submit(
             {
-                "event": kind,
-                "transition": event.transition,
+                "event": event_name,
                 "incident_id": event.incident.id,
                 "group_id": summary.id,
                 "service": event.incident.service,

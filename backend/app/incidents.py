@@ -7,10 +7,12 @@ what becomes an incident, when it is really over, and who gets told (once, not p
 from __future__ import annotations
 
 import logging
+import textwrap
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from app.aggregator import Aggregator
 from app.baseline import Baseline
@@ -20,7 +22,15 @@ from app.correlation import CorrelationEngine, CorrelationGroup, DependencyGraph
 from app.detectors import Evaluation
 from app.explainer.base import Explainer
 from app.explainer.rule_based import RuleBasedExplainer, format_duration
-from app.hints import PatternKey, hint_for, merge_evidence, rank_patterns, top_patterns
+from app.hints import (
+    FALLBACK_HINT,
+    SILENCE_HINT,
+    PatternKey,
+    hint_for,
+    merge_evidence,
+    rank_patterns,
+    top_patterns,
+)
 from app.models import (
     Escalation,
     GroupCard,
@@ -48,6 +58,65 @@ SIGNAL_LABELS: dict[SignalType, str] = {
     SignalType.NEW_PATTERN: "new error pattern",
     SignalType.PATTERN_SURGE: "error pattern surge",
 }
+
+# ---- mobile-friendly SNS notifications (§6.13-adjacent; not in CLAUDE.md, added for the demo) --
+
+SMS_WRAP_WIDTH = 45  # short lines for a phone screen
+
+# The subject's plain-language kind ("database slowdown") is read off the FIRST matching entry
+# in the origin incident's own timeline, not a live/growing set of signal types -- entries are
+# only ever appended, never reordered or removed, so the word is fixed the moment the incident
+# opens and cannot later flip (e.g. from "slowdown" to "errors") as new signal types appear.
+_KIND_BY_EVENT_LABEL = {
+    SIGNAL_LABELS[SignalType.SILENCE]: "outage",
+    SIGNAL_LABELS[SignalType.LATENCY]: "slowdown",
+    SIGNAL_LABELS[SignalType.ERROR_RATE]: "errors",
+}
+
+# A pattern template's dynamic-token placeholders, replaced so a quoted pattern reads as prose
+# rather than showing raw tokens like "<NUM>" (CLAUDE.md §6.5's mask, in reverse for humans).
+_PLACEHOLDER_WORDS = {
+    "<UUID>": "an ID",
+    "<EMAIL>": "an email address",
+    "<IP>": "an IP address",
+    "<HEX>": "a code",
+    "<NUM>": "N",
+}
+
+
+def _readable_pattern(template: str) -> str:
+    text = template
+    for token, word in _PLACEHOLDER_WORDS.items():
+        text = text.replace(token, word)
+    return text
+
+
+# The canonical hint text (CLAUDE.md §6.12; also shown verbatim in the dashboard's HINT panel)
+# is a full sentence. The SNS email is read on a phone, so CHECK FIRST uses a shorter, imperative
+# phrasing of the same advice instead -- a display-only concern, so the mapping lives here rather
+# than changing the hint text everyone else (dashboard, explainer) relies on.
+_CONCISE_HINTS = {
+    "Database or downstream dependency: check DB health, latency and connection pool.": (
+        "Check the database: health, latency, connection pool."
+    ),
+    "Authentication/credentials: check keys, certificates, recent config changes.": (
+        "Check auth: keys, certificates, recent config changes."
+    ),
+    "Resource exhaustion: check memory/disk on the host.": "Check the host: memory, disk space.",
+    "Downstream service unavailable: check the dependency's health.": (
+        "Check the downstream service's health."
+    ),
+    SILENCE_HINT: "Check the service is running and shipping logs.",
+    FALLBACK_HINT: "Compare with recent deploys and config changes.",
+}
+
+
+def _concise_hint(hint: str) -> str:
+    return _CONCISE_HINTS.get(hint, hint)
+
+
+def _wrap(text: str, width: int = SMS_WRAP_WIDTH) -> list[str]:
+    return textwrap.wrap(text, width=width, break_long_words=False) or [text]
 
 
 def priority_key(incident: IncidentSummary | GroupSummary) -> tuple[int, int, int, float]:
@@ -567,43 +636,28 @@ class IncidentManager:
     def _notify(
         self, kind: str, group: CorrelationGroup, severity: Severity, now: float
     ) -> NotifyRequest:
+        """Build the SNS notification: short enough to read on a phone at a glance. The subject
+        alone carries severity and title (the body does not repeat them); the first body line
+        says whether it is still active, everything else is there for someone who scrolls
+        further. IDs are pushed to the very bottom."""
         origin = self._engine.origin(group)
         member = next(m for m in group.members if m.service == origin)
+        origin_incident = self._incidents[member.incident_id]
         card = self._card(group)  # the full, merged evidence (what/timeline/patterns/hint)
-        stamp = datetime.fromtimestamp(now, UTC).strftime("%Y-%m-%d %H:%M:%SZ")
+        tz = ZoneInfo(self._settings.DISPLAY_TIMEZONE)
         n = len(card.affected_services) or 1
         plural = "s" if n != 1 else ""
-        if kind == "resolved":
-            subject = (
-                f"[RESOLVED] SentinelAI: {origin} outage recovered, {n} service{plural} affected"
-            )
-        else:
-            subject = (
-                f"[{severity.name}] SentinelAI: {origin} outage, {n} service{plural} affected"
-            )
+        title = f"{origin} {self._plain_kind(origin_incident)}"
 
-        lines = [
-            f"SentinelAI incident — {kind.upper()} ({severity.name})",
-            "",
-            f"WHAT: {card.what or 'n/a'}",
-            f"HOW BAD: peak z={card.peak_z:.1f}, duration {format_duration(card.duration_s)}, "
-            f"{card.failed_ops} failed ops",
-            f"AFFECTED: {', '.join(card.affected_services) or origin}",
-        ]
-        top = card.patterns[0] if card.patterns else None
-        if top is not None:
-            tag = "NEW " if top.is_new else ""
-            lines.append(f"PROBABLE CAUSE: {tag}{top.template} (x{top.count}, {top.service})")
-        lines.append(f"HINT: {card.hint or 'n/a'}")
-        lines.append("")
-        lines.append("TIMELINE:")
-        for entry in card.story[-8:]:
-            t = datetime.fromtimestamp(entry.t, UTC).strftime("%H:%M:%SZ")
-            sev = f" [{entry.severity.name}]" if entry.severity else ""
-            lines.append(f"  {t}  {entry.service}{sev}  {entry.event}")
-        lines.append("")
-        lines.append(f"Dashboard: {self._settings.DASHBOARD_URL.rstrip('/')}/?incident={group.id}")
-        lines.append(f"Incident {member.incident_id} / group {group.id} at {stamp}")
+        members = [self._incidents[m.incident_id] for m in group.members]
+        started = min(i.anomaly_started_at or i.opened_at for i in members)
+
+        if kind == "resolved":
+            subject = f"[RESOLVED] {title} - {n} service{plural} affected"
+            body = self._resolved_body(card, title)
+        else:
+            subject = f"[{severity.name}] {title} - {n} service{plural} affected"
+            body = self._active_body(card, origin, tz, started, origin_incident)
 
         payload: dict[str, Any] = {
             "kind": kind,
@@ -624,9 +678,121 @@ class IncidentManager:
             group_id=group.id,
             severity=severity,
             subject=subject[:100],
-            body="\n".join(lines),
+            body=body,
             payload=payload,
         )
+
+    @staticmethod
+    def _plain_kind(origin_incident: Incident) -> str:
+        """A one-or-two-word plain-language description of what kind of trouble this is, for
+        the subject line ("database slowdown", "auth-service errors"): the first symptom in the
+        incident's own timeline that actually says what broke (skipping new-pattern/surge
+        entries, which say a pattern is unusual but not what kind of anomaly it is). Timeline
+        entries are only ever appended, so this word is fixed forever once the incident opens."""
+        for entry in origin_incident.timeline:
+            found = _KIND_BY_EVENT_LABEL.get(entry.event)
+            if found is not None:
+                return found
+        return "anomaly"
+
+    @staticmethod
+    def _multiplier(value: float, baseline: float) -> str:
+        """"Nx" against a baseline, truncated (3.9x reads as "3x": "at least this much worse",
+        not a rounded estimate). Empty when there is no usable baseline to divide by."""
+        return f"{int(value / baseline)}x" if baseline > 0 else ""
+
+    @classmethod
+    def _whats_wrong_lines(cls, origin_incident: Incident) -> list[str]:
+        signals = origin_incident.signals
+        error = next((s for s in signals if s.type is SignalType.ERROR_RATE), None)
+        latency = next((s for s in signals if s.type is SignalType.LATENCY), None)
+        lines: list[str] = []
+        if error is not None:
+            mult = cls._multiplier(error.value, error.baseline_median)
+            pct = f"{error.value * 100:.0f}% vs {error.baseline_median * 100:.0f}%"
+            lines.append(f"Error rate {mult} normal ({pct})" if mult else f"Error rate {pct}")
+        if latency is not None and latency.baseline_median > 0:
+            mult = cls._multiplier(latency.value, latency.baseline_median)
+            lines.extend(
+                _wrap(
+                    f"{mult} slower than normal "
+                    f"({latency.value:.0f} ms vs {latency.baseline_median:.0f} ms)"
+                )
+            )
+        if not lines:
+            lines.extend(_wrap(origin_incident.what or "Anomaly detected"))
+        lines.append(f"{origin_incident.failed_ops} failed operations")
+        return lines
+
+    @staticmethod
+    def _key_moments(timeline: list[TimelineEntry]) -> list[tuple[float, str]]:
+        """At most 4 moments from the ORIGIN's own timeline (not the group's merged story, which
+        would mix in other services' opens and read as duplicated, out-of-context lines): how it
+        started, when it opened, and its escalations -- the shape of the incident, not the log."""
+        moments: list[tuple[float, str]] = []
+        if timeline and timeline[0].event not in ("opened", "reopened"):
+            moments.append((timeline[0].t, "first signs of trouble"))
+        for e in timeline:
+            if e.event in ("opened", "reopened"):
+                moments.append((e.t, "reopened" if e.event == "reopened" else "incident opened"))
+            elif e.event == "escalated":
+                moments.append((e.t, f"escalated to {e.severity.name if e.severity else '?'}"))
+        deduped = list(dict.fromkeys(moments))
+        if len(deduped) > 4:
+            deduped = deduped[:1] + deduped[-3:]  # keep the start, then the latest progression
+        return deduped
+
+    def _local_clock(self, t: float, tz: ZoneInfo) -> str:
+        """Includes seconds: escalations often land within the same minute, and without seconds
+        the WHAT HAPPENED progression looks like everything happened at once."""
+        dt = datetime.fromtimestamp(t, tz)
+        hour = dt.strftime("%I").lstrip("0") or "12"
+        return f"{hour}:{dt.strftime('%M:%S %p')}"
+
+    def _active_body(
+        self,
+        card: GroupCard,
+        origin: str,
+        tz: ZoneInfo,
+        started: float,
+        origin_incident: Incident,
+    ) -> str:
+        started_str = self._local_clock(started, tz)
+        tzname = datetime.fromtimestamp(started, tz).tzname()
+        # Severity and title are the subject line; the body does not repeat them.
+        lines = [f"Started {started_str} {tzname} - still active.", "", "CHECK FIRST:"]
+        lines.extend(_wrap(_concise_hint(card.hint or FALLBACK_HINT)))
+        top = card.patterns[0] if card.patterns else None
+        if top is not None:
+            phrase = _readable_pattern(top.template)
+            lines.extend(_wrap(f'Seen: "{phrase}" (x{top.count})'))
+        lines += ["", "WHAT'S WRONG:", *self._whats_wrong_lines(origin_incident)]
+        lines += ["", "AFFECTED:"]
+        for svc in card.affected_services:
+            lines.append(f"- {svc}" + (" (origin)" if svc == origin else ""))
+        lines += ["", "WHAT HAPPENED:"]
+        for t, text in self._key_moments(origin_incident.timeline):
+            lines.append(f"{self._local_clock(t, tz)} - {text}")
+        lines += [
+            "",
+            f"Dashboard: {self._settings.DASHBOARD_URL.rstrip('/')}/?incident={card.id}",
+            f"Ref: {card.id}",
+        ]
+        return "\n".join(lines)
+
+    def _resolved_body(self, card: GroupCard, title: str) -> str:
+        affected = ", ".join(card.affected_services)
+        summary = (
+            f"RESOLVED: {title}. Lasted {format_duration(card.duration_s)}. "
+            f"Peak: {card.max_severity.name}. Affected: {affected}. No action needed."
+        )
+        lines = [
+            *_wrap(summary),
+            "",
+            f"Dashboard: {self._settings.DASHBOARD_URL.rstrip('/')}/?incident={card.id}",
+            f"Ref: {card.id}",
+        ]
+        return "\n".join(lines)
 
     # ---- events and persistence -------------------------------------------------------
 

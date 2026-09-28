@@ -97,6 +97,7 @@ class Settings(BaseSettings):
     CW_LOG_STREAM: str = "demo"
     SNS_TOPIC_ARN: str = ""
     DASHBOARD_URL: str = "http://localhost:8000"  # linked from SNS notification bodies
+    DISPLAY_TIMEZONE: str = "Asia/Kolkata"  # human-facing times (SNS body); CloudWatch stays UTC
 
     # Optional LLM explainer
     LLM_PROVIDER: Literal["none", "anthropic", "openai", "azure_openai", "bedrock"] = "none"

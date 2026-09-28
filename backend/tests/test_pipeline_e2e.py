@@ -188,7 +188,13 @@ def test_phi_never_leaves_the_process(sim: SimpleNamespace) -> None:
         pipeline.notifier.deliver(queued)
     assert sim.s.dryrun_path.exists()
     dryrun_text = sim.s.dryrun_path.read_text(encoding="utf-8")
-    assert '"event": "incident_opened"' in dryrun_text  # the scan below means something
+    # Prove the scan below actually exercises the new mobile SNS format and the thinned
+    # CloudWatch event vocabulary, not just whatever happened to be there before.
+    assert '"event": "incident_opened"' in dryrun_text
+    assert '"event": "incident_updated"' not in dryrun_text  # per-tick noise is gone
+    assert "CHECK FIRST:" in dryrun_text and "WHAT'S WRONG:" in dryrun_text
+    assert "WHAT HAPPENED:" in dryrun_text and "Ref: grp-" in dryrun_text
+    assert "RESOLVED: " in dryrun_text and "No action needed." in dryrun_text
 
     outputs = {
         "incident list": json.dumps(groups),
