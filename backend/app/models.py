@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from enum import IntEnum, StrEnum
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, BeforeValidator, Field, PlainSerializer
 
 
 class Level(StrEnum):
@@ -21,6 +21,19 @@ class Severity(IntEnum):
     MEDIUM = 2
     HIGH = 3
     CRITICAL = 4
+
+
+def _severity_from_name(value: Any) -> Any:
+    return Severity[value.upper()] if isinstance(value, str) else value
+
+
+# A Severity that travels as its name ("CRITICAL") in JSON and is parsed back from it, while
+# staying an ordered IntEnum in Python (HIGH > MEDIUM works everywhere).
+SeverityName = Annotated[
+    Severity,
+    BeforeValidator(_severity_from_name),
+    PlainSerializer(lambda s: s.name, return_type=str, when_used="json"),
+]
 
 
 class SignalType(StrEnum):
@@ -96,14 +109,14 @@ class TimelineEntry(BaseModel):
     t: float
     service: str
     event: str
-    severity: Severity | None = None
+    severity: SeverityName | None = None
     detail: str = ""
 
 
 class Escalation(BaseModel):
     t: float
-    from_severity: Severity | None = None
-    to_severity: Severity
+    from_severity: SeverityName | None = None
+    to_severity: SeverityName
 
 
 class BlastNode(BaseModel):
@@ -146,8 +159,8 @@ class IncidentSummary(BaseModel):
     service: str
     group_id: str
     state: IncidentState
-    current_severity: Severity
-    max_severity: Severity
+    current_severity: SeverityName
+    max_severity: SeverityName
     opened_at: float
     resolved_at: float | None = None
     title: str = ""
@@ -171,9 +184,7 @@ class Incident(IncidentSummary):
     hint: str = ""
     samples: list[str] = Field(default_factory=list)  # max 3, redacted
     blast_radius: BlastRadius | None = None
-    explanation: Explanation | None = None
-    what_if: WhatIf | None = None
-    ml_score: float | None = None
+    ml_score: float | None = None  # stretch: per-service second opinion
     notified: bool = False
     anomaly_started_at: float | None = None  # first tick of the qualifying streak
 
@@ -185,7 +196,7 @@ class NotifyRequest(BaseModel):
     kind: Literal["opened", "escalated", "resolved"]
     incident_id: str  # the group's origin incident
     group_id: str
-    severity: Severity
+    severity: SeverityName
     subject: str
     body: str
     payload: dict[str, Any] = Field(default_factory=dict)
@@ -200,10 +211,65 @@ class IncidentEvent(BaseModel):
     notify: NotifyRequest | None = None
 
 
+class MemberIncident(BaseModel):
+    """One service's incident, nested inside a group card."""
+
+    id: str
+    service: str
+    state: IncidentState
+    current_severity: SeverityName
+    max_severity: SeverityName
+    opened_at: float
+    resolved_at: float | None = None
+    duration_s: float = 0.0
+    what: str = ""
+    failed_ops: int = 0
+    peak_z: float = 0.0
+    has_new_pattern: bool = False
+    signals: list[Signal] = Field(default_factory=list)
+    escalations: list[Escalation] = Field(default_factory=list)
+    timeline: list[TimelineEntry] = Field(default_factory=list)
+    ml_score: float | None = None
+
+
+class GroupSummary(BaseModel):
+    """The unit the on-call engineer sees: one outage, however many services it touches."""
+
+    id: str  # the correlation group id
+    state: IncidentState
+    current_severity: SeverityName
+    max_severity: SeverityName
+    opened_at: float
+    resolved_at: float | None = None
+    title: str = ""
+    origin: str | None = None
+    affected_services: list[str] = Field(default_factory=list)
+    has_new_pattern: bool = False
+    notified: bool = False
+    incidents: list[MemberIncident] = Field(default_factory=list)
+
+
+class GroupCard(GroupSummary):
+    """The full card (§7): the summary plus the evidence and the explanation."""
+
+    what: str = ""
+    duration_s: float = 0.0
+    failed_ops: int = 0
+    peak_z: float = 0.0
+    hint: str = ""
+    patterns: list[PatternRef] = Field(default_factory=list)
+    samples: list[str] = Field(default_factory=list)  # max 3, redacted
+    story: list[TimelineEntry] = Field(default_factory=list)  # every member's timeline merged
+    blast_radius: BlastRadius | None = None
+    explanation: Explanation | None = None
+    what_if: WhatIf | None = None  # stretch
+    ml_score: float | None = None  # stretch
+
+
 class NotificationEvent(BaseModel):
     channel: Channel
     incident_id: str
-    severity: Severity
+    severity: SeverityName
     ok: bool
     payload: dict[str, Any] = Field(default_factory=dict)
 

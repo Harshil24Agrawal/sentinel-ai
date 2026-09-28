@@ -7,6 +7,7 @@ at which signals appeared, and when, up to the end of each outage.
 import copy
 from types import SimpleNamespace
 
+import pytest
 from helpers import WARMED, ManagedGenRig, Rig
 
 from app.models import Severity, SignalType
@@ -14,6 +15,8 @@ from app.severity import compute_severity
 
 ERR, LAT, SIL = SignalType.ERROR_RATE, SignalType.LATENCY, SignalType.SILENCE
 NEW, SURGE = SignalType.NEW_PATTERN, SignalType.PATTERN_SURGE
+
+pytestmark = pytest.mark.slow
 
 POOL = "Connection pool exhausted after <NUM> ms"
 DB_TIMEOUT = "Database timeout while saving appointment <NUM>"

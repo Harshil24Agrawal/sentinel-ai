@@ -13,14 +13,14 @@ def clock() -> FakeClock:
 
 
 # ---- pipelines shared by the generator-backed tests (each scenario runs once per session) ----
-# Traffic runs at half rate: the behaviour is the same and the suite stays fast.
+# Only slow tests use them, at the generator's realistic traffic volumes.
 
 
 @pytest.fixture(scope="session")
 def warmed() -> ManagedGenRig:
     """The whole pipeline after WARMED seconds of normal traffic. Never mutated: scenarios
     run on deep copies of it."""
-    rig = ManagedGenRig(seed=7, rps_scale=0.5)
+    rig = ManagedGenRig(seed=7)
     rig.run(WARMED)
     return rig
 

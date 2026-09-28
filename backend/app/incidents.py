@@ -18,13 +18,18 @@ from app.clock import Clock
 from app.config import Settings, get_settings
 from app.correlation import CorrelationEngine, CorrelationGroup, DependencyGraph, Member
 from app.detectors import Evaluation
+from app.explainer.base import Explainer
+from app.explainer.rule_based import RuleBasedExplainer
 from app.hints import PatternKey, hint_for, merge_evidence, rank_patterns, top_patterns
 from app.models import (
     Escalation,
+    GroupCard,
+    GroupSummary,
     Incident,
     IncidentEvent,
     IncidentState,
     IncidentSummary,
+    MemberIncident,
     NotifyRequest,
     PatternRef,
     Severity,
@@ -45,7 +50,7 @@ SIGNAL_LABELS: dict[SignalType, str] = {
 }
 
 
-def priority_key(incident: IncidentSummary) -> tuple[int, int, int, float]:
+def priority_key(incident: IncidentSummary | GroupSummary) -> tuple[int, int, int, float]:
     """Sort key for the feed: open first, then severity, NEW-pattern incidents above
     surge-only ones, then the most recent."""
     return (
@@ -99,12 +104,14 @@ class IncidentManager:
         *,
         settings: Settings | None = None,
         store: Store | None = None,
+        explainer: Explainer | None = None,
     ) -> None:
         self._clock = clock
         self._agg = aggregator
         self._baseline = baseline
         self._settings = settings or get_settings()
         self._store = store
+        self._explainer: Explainer = explainer or RuleBasedExplainer()
         self._engine = CorrelationEngine(graph, self._settings.CORRELATION_WINDOW_SECONDS)
         self._incidents: dict[str, Incident] = {}
         self._meta: dict[str, _Meta] = {}
@@ -126,6 +133,14 @@ class IncidentManager:
     def open_services(self) -> set[str]:
         """Services with an open incident: their baselines must not learn."""
         return set(self._open)
+
+    def service_status(self, service: str) -> tuple[Severity | None, bool]:
+        """(severity of the service's open incident or None, whether it is silent right now)."""
+        track = self._tracks.get(service)
+        silent = track is not None and track.silence_since is not None
+        incident_id = self._open.get(service)
+        severity = self._incidents[incident_id].current_severity if incident_id else None
+        return severity, silent
 
     def get(self, incident_id: str) -> Incident | None:
         incident = self._incidents.get(incident_id)
@@ -157,6 +172,92 @@ class IncidentManager:
     @staticmethod
     def summary(incident: Incident) -> IncidentSummary:
         return IncidentSummary(**{f: getattr(incident, f) for f in IncidentSummary.model_fields})
+
+    # ---- group cards: what the user sees -----------------------------------------------
+
+    def resolve_group_id(self, any_id: str) -> str | None:
+        """A group id, or the id of one of its member incidents, to a group id."""
+        if any_id in self._engine.groups:
+            return any_id
+        incident = self._incidents.get(any_id)
+        return incident.group_id if incident else None
+
+    def group_card(self, any_id: str) -> GroupCard | None:
+        """The full card for a group (with the explanation), by group or member incident id."""
+        group_id = self.resolve_group_id(any_id)
+        if group_id is None:
+            return None
+        card = self._card(self._engine.groups[group_id])
+        card.explanation = self._explainer.explain(card)
+        return card
+
+    def group_summary(self, any_id: str) -> GroupSummary | None:
+        group_id = self.resolve_group_id(any_id)
+        if group_id is None:
+            return None
+        return self._summarize(self._card(self._engine.groups[group_id]))
+
+    def group_summaries(self, state: str = "all") -> list[GroupSummary]:
+        """One summary per outage, sorted by priority. ``state``: open | resolved | all."""
+        wanted = {"open": {IncidentState.OPEN}, "resolved": {IncidentState.RESOLVED}}.get(
+            state.lower(), set(IncidentState)
+        )
+        summaries = [self._summarize(self._card(g)) for g in self._engine.groups.values()]
+        return sorted((s for s in summaries if s.state in wanted), key=priority_key)
+
+    @staticmethod
+    def _summarize(card: GroupCard) -> GroupSummary:
+        return GroupSummary.model_validate(card.model_dump(include=set(GroupSummary.model_fields)))
+
+    @staticmethod
+    def _member(incident: Incident) -> MemberIncident:
+        return MemberIncident.model_validate(
+            incident.model_dump(include=set(MemberIncident.model_fields))
+        )
+
+    def _card(self, group: CorrelationGroup) -> GroupCard:
+        """Assemble a group's card from its member incidents (no explanation yet)."""
+        members = sorted(
+            (self._incidents[m.incident_id] for m in group.members), key=lambda i: i.opened_at
+        )
+        open_members = [i for i in members if i.state is IncidentState.OPEN]
+        origin = self._engine.origin(group)
+        origin_incident = next(i for i in members if i.service == origin)
+        if open_members:  # open members are refreshed every tick; resolved ones are frozen
+            rep = (
+                origin_incident if origin_incident.state is IncidentState.OPEN else open_members[0]
+            )
+        else:
+            rep = max(members, key=lambda i: i.resolved_at or 0.0)
+        pool = open_members or members
+        what = origin_incident.what or rep.what
+        others = len(set(group.services)) - 1
+        started = min(i.anomaly_started_at or i.opened_at for i in members)
+        end = group.resolved_at if group.resolved_at is not None else self._clock.now()
+        return GroupCard(
+            id=group.id,
+            state=IncidentState.OPEN if group.is_open else IncidentState.RESOLVED,
+            current_severity=max(i.current_severity for i in pool),
+            max_severity=max(i.max_severity for i in members),
+            opened_at=group.opened_at,
+            resolved_at=group.resolved_at,
+            title=(f"{origin}: {what}" if what else origin)
+            + (f" (+{others} more service{'s' if others > 1 else ''})" if others > 0 else ""),
+            origin=origin,
+            affected_services=list(dict.fromkeys(group.services)),
+            has_new_pattern=any(i.has_new_pattern for i in members),
+            notified=group.notified or group.notified_ever,
+            incidents=[self._member(i) for i in members],
+            what=what,
+            duration_s=max(0.0, end - started),
+            failed_ops=sum(i.failed_ops for i in members),
+            peak_z=max(i.peak_z for i in members),
+            hint=rep.hint,
+            patterns=[p.model_copy() for p in rep.patterns],
+            samples=list(origin_incident.samples or rep.samples),
+            story=sorted((e for i in members for e in i.timeline), key=lambda e: e.t),
+            blast_radius=rep.blast_radius.model_copy(deep=True) if rep.blast_radius else None,
+        )
 
     # ---- the tick ---------------------------------------------------------------------
 
@@ -453,7 +554,8 @@ class IncidentManager:
                 group.notified_severity is None or level > group.notified_severity
             ):
                 kind = "opened" if group.id in self._fresh_groups else "escalated"
-                group.notified, group.notified_severity = True, level
+                group.notified = group.notified_ever = True
+                group.notified_severity = level
                 notifies.append(self._notify(kind, group, level, now))
             for inc in incidents:
                 if inc.state is IncidentState.OPEN and inc.notified != group.notified:

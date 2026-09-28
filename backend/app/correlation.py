@@ -70,7 +70,8 @@ class CorrelationGroup:
     opened_at: float
     members: list[Member] = field(default_factory=list)
     resolved_at: float | None = None
-    notified: bool = False
+    notified: bool = False  # currently announced (reset when the resolve is announced)
+    notified_ever: bool = False  # was ever announced: what the card shows
     notified_severity: Severity | None = None
 
     @property
@@ -139,6 +140,7 @@ class CorrelationEngine:
                 target.members.append(m)
                 moved.append(m.incident_id)
             target.notified = target.notified or other.notified
+            target.notified_ever = target.notified_ever or other.notified_ever
             if other.notified_severity is not None:
                 target.notified_severity = max(
                     target.notified_severity or other.notified_severity, other.notified_severity

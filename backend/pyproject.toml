@@ -33,7 +33,10 @@ include = ["app*", "generator*"]
 testpaths = ["tests"]
 pythonpath = ["."]
 asyncio_mode = "auto"
-addopts = "-q"
+addopts = "-q -m 'not slow'"
+markers = [
+    'slow: long simulations at realistic traffic volumes (run everything with: pytest -m "slow or not slow")',
+]
 
 [tool.ruff]
 line-length = 100

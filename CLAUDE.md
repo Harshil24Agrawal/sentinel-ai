@@ -214,6 +214,7 @@ States: `OPEN → RESOLVED` (with `current_severity`, `max_severity`, `escalatio
 - **Cooldown/reopen:** if the same service anomalies again within `COOLDOWN_SECONDS` (60) of resolving, reopen the same incident.
 - **Notifications:** only on (a) open at HIGH+, (b) escalation into HIGH or CRITICAL, (c) resolve of an incident that notified. Never repeat for the same severity.
 - Every state change is written to the store and to CloudWatch (via the notifier queue).
+- **The card the user sees is per correlation group** (§7); the per-service incident is a member of it.
 - The incident card holds: what (metric now vs baseline), how bad (z, duration, failed ops), affected services, timeline (every severity transition with timestamp), probable cause, hint, 3 redacted sample lines, explanation, optional what-if and ML score.
 
 ### 6.11 `correlation.py`
@@ -264,20 +265,49 @@ Tables: `incidents`, `incident_events` (every transition, with a JSON snapshot),
 
 ## 7. API and WebSocket contract (the frontend and backend build against this in parallel)
 
+**One card per outage.** The unit the on-call engineer sees is the **correlation group** (§6.11): one outage is one incident card, however many services it touches. Each service inside it keeps its own state machine (§6.10) and appears nested in the card as a *member incident*. Every `id` below is a **group id**; a member incident id is also accepted by `GET /incidents/{id}` and resolves to its group. Severities are serialized as their names: `"LOW" | "MEDIUM" | "HIGH" | "CRITICAL"`. Timestamps are epoch seconds (float).
+
 REST (JSON, prefix `/api`):
 - `GET /health` → `{status, uptime_s, aws: "live"|"dryrun", llm: provider|"none"}`
-- `GET /services` → `[{name, status: "healthy"|"warming_up"|"LOW"|"MEDIUM"|"HIGH"|"CRITICAL"|"silent", volume, error_rate, p95_latency, baseline: {error_rate_median, error_rate_band: [lo, hi], p95_median}, depends_on}]`
-- `GET /incidents?status=open|resolved|all` → `[IncidentSummary]` sorted by priority (open first, then severity, NEW-pattern incidents above surge-only, then recency)
-- `GET /incidents/{id}` → full incident card (§6.10) plus the group story, blast radius, explanation, what-if, and ML score
-- `POST /simulate/{scenario}` → `{ok, scenario, started_at}`
-- `POST /config/sensitivity` `{open_z: 2..5}` → `{ok}`
-- `GET /stats` → `{naive_alerts, sentinel_incidents, sentinel_notifications, detection_latency_s: {scenario: seconds}, phi_redacted}`
+- `GET /services` → `[{name, status: "healthy"|"warming_up"|"LOW"|"MEDIUM"|"HIGH"|"CRITICAL"|"silent", volume, error_rate, p95_latency, baseline: {error_rate_median, error_rate_band: [lo, hi], p95_median, ready}, depends_on}]`
+- `GET /incidents?status=open|resolved|all` (default `all`) → `[GroupSummary]`, sorted by priority (open first, then severity, NEW-pattern incidents above surge-only, then recency)
+- `GET /incidents/{id}` → `GroupCard` (404 if unknown)
+- `POST /simulate/{scenario}` → `{ok, scenario, started_at}` (404 unknown scenario; 409 if the generator is disabled)
+- `POST /config/sensitivity` `{open_z: 2..5}` → `{ok, open_z}` (422 outside the range)
+- `GET /stats` → `{naive_alerts, sentinel_incidents, sentinel_notifications, detection_latency_s: {scenario: seconds}, phi_redacted}` (`sentinel_incidents` counts groups)
+- `GET /metrics/history?seconds=300` → `[metrics frame]` (the last N seconds of the WebSocket `metrics` messages, oldest first; lets a freshly loaded page draw its chart)
 - `GET /replay/{id}` → `{frames: [{t, services: {...}}]}` (stretch)
 
+`GroupSummary`:
+```
+{id, state: "OPEN"|"RESOLVED", current_severity, max_severity, opened_at, resolved_at|null,
+ title, origin, affected_services: [str], has_new_pattern, notified,
+ incidents: [MemberIncident]}
+```
+`MemberIncident` (one per service in the group, ordered by `opened_at`):
+```
+{id, service, state, current_severity, max_severity, opened_at, resolved_at|null, duration_s,
+ what, failed_ops, peak_z, has_new_pattern, signals: [Signal], escalations: [{t, from_severity, to_severity}],
+ timeline: [{t, service, event, severity|null, detail}]}
+```
+`GroupCard` = `GroupSummary` plus:
+```
+{what, duration_s, failed_ops, peak_z,
+ hint,                                   // the PROBABLE cause, never "root cause"
+ patterns: [{pattern_id, template, count, expected_per_min, is_new, surge_ratio, service}],   // top 3
+ samples: [str],                         // up to 3 redacted lines
+ story: [TimelineEntry],                 // every member's timeline merged, time-ordered
+ blast_radius: {origin, nodes: [{service, status: "impacted"|"at_risk"|"healthy"}]},
+ explanation: {is_incident, summary, probable_cause, affected_services, recommended_checks,
+               confidence: "low"|"medium"|"high", source: "rule_based"|"llm", label},
+ what_if: {...}|null, ml_score: float|null}     // stretch, null until implemented
+```
+`Signal` = `{type: "error_rate"|"latency"|"silence"|"new_pattern"|"pattern_surge", service, value, baseline_median, z, detail, pattern_id|null}`.
+
 WebSocket `/ws`: each message is `{"type": ..., "data": ...}`:
-- `metrics` every tick: `{t, services: {name: {volume, error_rate, p95_latency, band: [lo, hi], status}}}`
-- `incident_opened` | `incident_updated` | `incident_resolved`: `IncidentSummary`
-- `notification`: `{channel: "sns"|"cloudwatch"|"dryrun", incident_id, severity, ok}`
+- `metrics` every tick: `{t, services: {name: {volume, error_rate, p95_latency, band: [lo, hi], status}}}` (`band` is the normal error-rate range)
+- `incident_opened` | `incident_updated` | `incident_resolved`: `GroupSummary`. `opened` is sent when a group appears (or a resolved group reopens), `updated` when its severity, members, origin or evidence change, `resolved` when its last member resolves.
+- `notification`: `{channel: "sns"|"cloudwatch"|"dryrun", incident_id (the group id), severity, ok}`
 
 The frontend falls back to polling `/api/services` and `/api/incidents` every 2s if the WebSocket disconnects, and shows a connection indicator.
 

@@ -1,4 +1,3 @@
-import dataclasses
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -20,11 +19,7 @@ PHI_KEYS = re.compile(r"member_id=|ssn=|email=|patient_name=")
 
 @pytest.fixture
 def gen(clock: FakeClock, tmp_path: Path) -> LogGenerator:
-    half = {  # half the traffic: the same behaviour, a faster suite
-        name: dataclasses.replace(spec, rps=spec.rps * 0.5)
-        for name, spec in load_services().items()
-    }
-    return LogGenerator(clock, tmp_path / "logs" / "app.log", services=half, seed=7)
+    return LogGenerator(clock, tmp_path / "logs" / "app.log", seed=7)
 
 
 def simulate(gen: LogGenerator, clock: FakeClock, seconds: int) -> list[list[LogEvent]]:
@@ -60,6 +55,7 @@ def test_services_yaml_matches_spec() -> None:
     assert services["database"].latency_mean_ms == 8
 
 
+@pytest.mark.slow
 def test_normal_traffic_volume_and_error_rates(gen: LogGenerator, clock: FakeClock) -> None:
     seconds = simulate(gen, clock, 60)
     for name, spec in gen.services.items():
@@ -91,6 +87,7 @@ def test_same_seed_gives_same_traffic(clock: FakeClock, tmp_path: Path) -> None:
     assert a.generate() == b.generate()
 
 
+@pytest.mark.slow
 def test_phi_like_fields_appear_about_once_per_200_normal_lines_and_get_redacted(
     gen: LogGenerator, clock: FakeClock
 ) -> None:
@@ -104,6 +101,7 @@ def test_phi_like_fields_appear_about_once_per_200_normal_lines_and_get_redacted
     assert not any(re.search(r"MBR\d|\d{3}-\d{2}-\d{4}|@example\.com|Jane|Doe", c) for c in cleaned)
 
 
+@pytest.mark.slow
 def test_base_error_messages_use_a_single_stable_pattern_per_service(
     gen: LogGenerator, clock: FakeClock
 ) -> None:
@@ -117,6 +115,7 @@ def test_base_error_messages_use_a_single_stable_pattern_per_service(
     assert patterns and all(len(p) == 1 for p in patterns.values()), patterns
 
 
+@pytest.mark.slow
 def test_db_degradation(gen: LogGenerator, clock: FakeClock) -> None:
     start = gen.start_scenario("db_degradation")
     seconds = simulate(gen, clock, 75)
@@ -160,13 +159,14 @@ def test_db_degradation(gen: LogGenerator, clock: FakeClock) -> None:
     assert error_rate(slice_of(seconds, 40, 60, "provider-service")) < 0.05
 
 
+@pytest.mark.slow
 def test_auth_outage(gen: LogGenerator, clock: FakeClock) -> None:
     start = gen.start_scenario("auth_outage")
     seconds = simulate(gen, clock, 45)
     assert gen.fault_injected_at == {"auth-service": start, "patient-portal": start + 15}
 
     auth = slice_of(seconds, 15, 45, "auth-service")
-    assert 0.28 < error_rate(auth) < 0.52  # target 0.40 (half traffic: wider bounds)
+    assert 0.28 < error_rate(auth) < 0.52  # target 0.40
     templates = {e.template for e in auth if e.is_error}
     assert "Token validation failed: signing key <HEX> not found" in templates
     assert "Login rejected with HTTP <NUM> for request <NUM>" in templates  # still present: surges
@@ -177,6 +177,7 @@ def test_auth_outage(gen: LogGenerator, clock: FakeClock) -> None:
     assert error_rate(slice_of(seconds, 20, 45, "database")) < 0.05
 
 
+@pytest.mark.slow
 def test_silent_service_stops_logging_entirely(gen: LogGenerator, clock: FakeClock) -> None:
     before = simulate(gen, clock, 5)
     assert slice_of(before, 0, 5, "notification-service")
@@ -186,6 +187,7 @@ def test_silent_service_stops_logging_entirely(gen: LogGenerator, clock: FakeClo
     assert slice_of(after, 0, 20, "database")  # everyone else keeps logging
 
 
+@pytest.mark.slow
 def test_noisy_blip_lasts_three_seconds_only(gen: LogGenerator, clock: FakeClock) -> None:
     gen.start_scenario("noisy_blip")
     seconds = simulate(gen, clock, 20)
@@ -201,6 +203,7 @@ def test_noisy_blip_can_target_any_service_and_rejects_unknown(gen: LogGenerator
         gen.start_scenario("noisy_blip", service="nope")
 
 
+@pytest.mark.slow
 def test_recover_returns_everything_to_normal(gen: LogGenerator, clock: FakeClock) -> None:
     gen.start_scenario("db_degradation")
     simulate(gen, clock, 45)

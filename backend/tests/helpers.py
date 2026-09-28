@@ -21,9 +21,10 @@ from app.models import Incident, IncidentEvent, Level, LogEvent, NotifyRequest, 
 from app.naive import NaiveDetector
 from app.parser import LogParser
 from app.patterns import mine
+from app.pipeline import Pipeline
 from app.redaction import Redactor
 from app.store import Store
-from generator.generator import LogGenerator
+from generator.generator import LogGenerator, format_ts
 from generator.services import load_services
 
 START = 1_000_000.0
@@ -355,3 +356,78 @@ def outage(warmed: ManagedGenRig, scenario: str, seconds: int) -> SimpleNamespac
         resolve_ticks=ticks,
         baseline_samples=baseline_samples,
     )
+
+
+# ---- Phase 4: the whole Pipeline on synthetic log lines --------------------------------
+
+
+class LineRig:
+    """Feeds (see ``Feed``) rendered as real log lines and pushed through a real ``Pipeline``
+    on a FakeClock. ``pipeline.tick_once(lines)`` is exactly what the async loop calls."""
+
+    def __init__(
+        self,
+        *feeds: Feed,
+        generator: LogGenerator | None = None,
+        store: bool = True,
+        **settings: Any,
+    ) -> None:
+        self.settings = make_settings(**settings)
+        self.clock = FakeClock(START)
+        self.pipeline = Pipeline(
+            self.clock,
+            self.settings,
+            services=load_services(),
+            store=Store(":memory:") if store else None,
+            generator=generator,
+        )
+        self.feeds = list(feeds)
+        self.rng = random.Random(1)
+        self.t = 0
+        self.messages: list[tuple[int, dict[str, Any]]] = []
+
+    def _lines(self, feed: Feed) -> list[str]:
+        if self.t < feed.start or (feed.stop is not None and self.t >= feed.stop):
+            return []
+        if (self.t - feed.start) % feed.every:
+            return []
+        if feed.noisy:
+            errors = sum(self.rng.random() < feed.p_error for _ in range(feed.lines))
+        else:
+            feed._acc += feed.p_error * feed.lines
+            errors = int(feed._acc)
+            feed._acc -= errors
+        now = self.clock.now()
+        lines = []
+        for i in range(feed.lines):
+            is_error = i < errors
+            template = feed.error_message if is_error else feed.message
+            text = template.format(n=self.rng.randint(10000, 99999))
+            latency = ""
+            if feed.latency is not None:
+                latency = f"latency_ms={max(1, int(self.rng.gauss(*feed.latency)))} "
+            level = "ERROR" if is_error else "INFO"
+            lines.append(
+                f"{format_ts(now - self.rng.random())} {level:<5} {feed.service} {latency}{text}"
+            )
+        return lines
+
+    def tick(self, extra_lines: list[str] | None = None) -> list[dict[str, Any]]:
+        lines = [line for feed in self.feeds for line in self._lines(feed)]
+        messages = self.pipeline.tick_once([*lines, *(extra_lines or [])])
+        self.messages.extend((self.t, m) for m in messages)
+        self.clock.advance(1)
+        self.t += 1
+        return messages
+
+    def run(self, n: int) -> None:
+        for _ in range(n):
+            self.tick()
+
+    def of_type(self, kind: str) -> list[dict[str, Any]]:
+        return [m["data"] for _, m in self.messages if m["type"] == kind]
+
+
+def all_services_feeds(lines: int = 12, p_error: float = 0.02) -> list[Feed]:
+    """Steady traffic for every service in services.yaml (latency ~100ms, ~2% errors)."""
+    return [Feed(name, lines=lines, p_error=p_error) for name in load_services()]

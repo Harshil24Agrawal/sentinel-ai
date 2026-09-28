@@ -102,6 +102,11 @@ class Settings(BaseSettings):
     LLM_TIMEOUT_SECONDS: float = 8.0
     LLM_MIN_INTERVAL_SECONDS: int = 60
 
+    # API
+    CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]  # Vite dev server
+    HISTORY_SECONDS: int = 300  # metrics frames kept for GET /api/metrics/history
+    LOG_LEVEL: str = "INFO"
+
     # Built-in synthetic traffic
     GENERATOR_ENABLED: bool = True
     GENERATOR_SEED: int | None = None  # set for reproducible demo traffic

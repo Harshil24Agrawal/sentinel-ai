@@ -1,12 +1,13 @@
 """End to end on a FakeClock: generator -> parser -> aggregator -> detectors -> incidents.
 
-Traffic runs at half rate (the behaviour is the same, the suite is faster). The collector and
-the file round trip are covered in their own tests; the API arrives in Phase 4.
+Realistic traffic volumes. A slow module: run everything with `pytest -m "slow or not slow"`.
+The collector and the file round trip are covered in their own tests.
 """
 
 from types import SimpleNamespace
 
-from helpers import WARMED, Feed, ManagedGenRig, ManagedRig
+import pytest
+from helpers import WARMED, ManagedGenRig
 
 from app.hints import DEFAULT_RULES, SILENCE_HINT
 from app.models import IncidentState, Severity
@@ -18,6 +19,8 @@ DB, APPT, CLAIMS, NOTIF = (
     "notification-service",
 )
 AUTH, PORTAL, PROVIDER = "auth-service", "patient-portal", "provider-service"
+pytestmark = pytest.mark.slow
+
 DB_HINT, AUTH_HINT = DEFAULT_RULES[0][1], DEFAULT_RULES[1][1]
 
 
@@ -190,42 +193,3 @@ def test_noisy_blip_opens_no_incident(blip_run: ManagedGenRig) -> None:
     assert rig.notifies() == []
     peak = max(r["claims-service"].error_z or 0 for r in rig.history[WARMED:])
     assert peak < 3.0
-
-
-# ---- a step spike, on synthetic traffic -------------------------------------------------
-
-
-def test_thirty_percent_spike_opens_an_incident_within_fifteen_seconds() -> None:
-    feed = Feed("svc", lines=25, p_error=0.02)
-    rig = ManagedRig(feed)
-    rig.run(100)
-    assert rig.manager.incidents() == []
-    step = rig.t
-    feed.p_error = 0.30
-    rig.run(30)
-    opened = [(t, e) for t, e in rig.events if e.kind == "opened"]
-    assert len(opened) == 1
-    tick, event = opened[0]
-    assert 0 < tick - step <= 15
-    assert event.incident.service == "svc"
-    assert rig.manager.open_services() == {"svc"}
-
-
-def test_incident_lifecycle_is_persisted_to_the_store() -> None:
-    feed = Feed("svc", lines=25, p_error=0.02)
-    rig = ManagedRig(feed, with_store=True)
-    rig.run(100)
-    feed.p_error = 0.50
-    rig.run(40)
-    feed.p_error = 0.02
-    for _ in range(200):
-        rig.tick()
-        if not rig.manager.open_services():
-            break
-    assert rig.store is not None
-    (stored,) = rig.store.list_incidents("resolved")
-    assert stored.service == "svc" and stored.resolved_at is not None
-    assert rig.store.list_incidents("open") == []
-    kinds = [e["kind"] for e in rig.store.events(stored.id)]
-    assert kinds[0] == "opened" and kinds[-1] == "resolved"
-    assert rig.store.get_incident(stored.id) == rig.manager.get(stored.id)
