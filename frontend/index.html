@@ -8,175 +8,174 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
   :root {
-    --bg:#f3f5f9; --card:#ffffff; --line:#e3e8f0; --text:#1b2333; --muted:#6b7689; --side:#0f2a4a; --sidetext:#c9d6ea;
+    --bg:#f3f5f9; --card:#ffffff; --line:#e3e8f0; --text:#1b2333; --muted:#6b7689; --navy:#0f2a4a;
     --accent:#2f6fed; --ok:#1fa463; --low:#d4a017; --med:#e8890c; --high:#e0561f; --crit:#d62839; --silent:#8e44ad; --warm:#8a94a8;
   }
   * { box-sizing:border-box; }
-  html { scroll-behavior:smooth; }
-  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; display:flex; min-height:100vh; }
-  /* sidebar */
-  aside { width:220px; flex:none; background:var(--side); color:var(--sidetext); padding:18px 14px; position:sticky; top:0; height:100vh; display:flex; flex-direction:column; }
-  .brand { color:#fff; font-size:20px; font-weight:700; } .brand span { color:#6fb1ff; }
-  .tag { font-size:11px; color:#8fa5c6; margin:2px 0 20px; }
-  nav a { display:block; color:var(--sidetext); text-decoration:none; padding:8px 10px; border-radius:6px; margin-bottom:2px; }
-  nav a:hover { background:rgba(255,255,255,.1); color:#fff; }
-  .sidefoot { margin-top:auto; font-size:12px; }
-  .sidefoot div { display:flex; justify-content:space-between; padding:6px 0; border-top:1px solid rgba(255,255,255,.12); }
-  .sidefoot b { color:#fff; }
-  /* main */
-  .wrap { flex:1; min-width:0; }
-  .top { display:flex; align-items:center; gap:12px; padding:12px 20px; background:var(--card); border-bottom:1px solid var(--line); position:sticky; top:0; z-index:5; }
-  .top h1 { font-size:16px; margin:0; } .top .sub { color:var(--muted); font-size:12px; }
-  .grow { flex:1; }
-  .live { display:inline-flex; align-items:center; gap:6px; font-weight:700; font-size:12px; padding:4px 10px; border-radius:999px; border:1px solid var(--line); }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  .muted { color:var(--muted); }
+  /* header */
+  header { display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding:10px 20px; background:var(--navy); color:#fff; }
+  header .brand { font-size:19px; font-weight:700; } header .brand span { color:#6fb1ff; }
+  header .tag { font-size:11px; color:#8fa5c6; }
+  header .grow { flex:1; }
+  .meta { font-size:12px; color:#c9d6ea; } .meta b { color:#fff; }
+  .live { display:inline-flex; align-items:center; gap:6px; font-weight:700; font-size:12px; padding:3px 10px; border-radius:999px; border:1px solid rgba(255,255,255,.3); }
   .dot { width:9px; height:9px; border-radius:50%; background:var(--crit); }
-  .live.ws .dot { background:var(--ok); animation:pulse 1.4s infinite; } .live.poll .dot { background:var(--low); }
+  .live.ws .dot { background:#3ddc84; animation:pulse 1.4s infinite; } .live.poll .dot { background:var(--low); }
   @keyframes pulse { 50% { opacity:.35; } }
-  details.demo { position:relative; }
-  details.demo summary { list-style:none; cursor:pointer; background:var(--accent); color:#fff; padding:7px 14px; border-radius:6px; font-weight:600; }
-  details.demo summary::-webkit-details-marker { display:none; }
-  .menu { position:absolute; right:0; top:110%; background:var(--card); border:1px solid var(--line); border-radius:8px; box-shadow:0 8px 24px rgba(20,30,50,.15); min-width:190px; padding:4px; z-index:10; }
-  .menu button { display:block; width:100%; text-align:left; background:none; border:0; padding:8px 10px; border-radius:6px; cursor:pointer; font:inherit; color:var(--text); }
-  .menu button:hover { background:var(--bg); }
-  main { padding:18px 20px 30px; display:flex; flex-direction:column; gap:16px; }
-  .row { display:grid; gap:16px; }
-  .r4 { grid-template-columns:repeat(4,minmax(0,1fr)); } .r21 { grid-template-columns:minmax(0,2fr) minmax(0,1fr); }
-  @media (max-width:1100px) { .r4 { grid-template-columns:repeat(2,minmax(0,1fr)); } .r21 { grid-template-columns:1fr; } }
-  @media (max-width:760px) { aside { display:none; } }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; min-width:0; scroll-margin-top:70px; }
+  #alertBtn { background:transparent; color:#fff; border:1px solid rgba(255,255,255,.4); border-radius:6px; padding:5px 10px; cursor:pointer; font:inherit; font-size:12px; display:none; }
+  /* failure drill (testing tool) */
+  details.drill { position:relative; }
+  details.drill summary { list-style:none; cursor:pointer; background:repeating-linear-gradient(45deg,#fff7e0,#fff7e0 8px,#ffefc2 8px,#ffefc2 16px); color:#7a4b00; border:2px dashed #d99a1c; padding:5px 12px; border-radius:6px; font-weight:700; font-size:13px; }
+  details.drill summary::-webkit-details-marker { display:none; }
+  .drillmenu { position:absolute; right:0; top:115%; width:340px; background:#fffbf0; border:2px dashed #d99a1c; border-radius:8px; padding:8px; z-index:40; color:var(--text); box-shadow:0 10px 30px rgba(20,30,50,.25); }
+  .drillmenu .warn { font-size:11px; color:#7a4b00; padding:2px 6px 8px; border-bottom:1px dashed #d99a1c; margin-bottom:4px; }
+  .drillmenu button { display:block; width:100%; text-align:left; background:none; border:0; padding:7px 8px; border-radius:6px; cursor:pointer; font:inherit; color:var(--text); }
+  .drillmenu button:hover { background:#fff0c9; } .drillmenu button b { display:block; font-size:13px; } .drillmenu button span { font-size:12px; color:var(--muted); }
+  /* banner */
+  #banner { display:flex; align-items:center; gap:12px; padding:10px 20px; color:#fff; font-weight:600; background:var(--warm); }
+  #banner .txt { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #banner button { background:#fff; color:var(--text); border:0; border-radius:6px; padding:5px 14px; font:inherit; font-weight:700; cursor:pointer; display:none; }
+  /* layout */
+  main { padding:16px 20px 30px; display:flex; flex-direction:column; gap:16px; }
+  .kpis { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+  .kpi { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:8px 12px; }
+  .kpi .l { font-size:11px; text-transform:uppercase; letter-spacing:.7px; color:var(--muted); } .kpi .v { font-size:20px; font-weight:700; } .kpi .s { font-size:11px; color:var(--muted); }
+  .areas { display:grid; grid-template-columns:270px minmax(0,1fr) 340px; gap:16px; align-items:start; }
+  @media (max-width:1150px) { .areas { grid-template-columns:1fr; } .kpis { grid-template-columns:1fr; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; min-width:0; }
   .card h2 { margin:0 0 10px; font-size:12px; text-transform:uppercase; letter-spacing:.8px; color:var(--muted); display:flex; align-items:center; gap:8px; }
-  .kpi .v { font-size:26px; font-weight:700; margin:2px 0; } .kpi .s { color:var(--muted); font-size:12px; }
-  .keystats { border:2px solid var(--accent); background:linear-gradient(90deg,#f5f9ff,#fff); }
-  .ks { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
-  .ks div { text-align:center; } .ks b { display:block; font-size:32px; line-height:1.1; } .ks span { font-size:11px; text-transform:uppercase; color:var(--muted); letter-spacing:.6px; }
   .tabs { display:flex; gap:4px; margin-left:auto; }
   .tabs button { border:1px solid var(--line); background:var(--card); padding:3px 10px; border-radius:6px; cursor:pointer; font:inherit; font-size:12px; color:var(--muted); text-transform:none; letter-spacing:0; }
   .tabs button.on { background:var(--accent); border-color:var(--accent); color:#fff; }
-  .chartbox { position:relative; height:260px; }
-  .sens { display:flex; align-items:center; gap:8px; margin-top:8px; font-size:12px; color:var(--muted); }
-  select.svc { font:inherit; font-size:12px; padding:2px 6px; border:1px solid var(--line); border-radius:6px; text-transform:none; letter-spacing:0; }
+  .chartbox { position:relative; height:300px; }
+  /* services */
+  .svc { display:flex; align-items:center; gap:8px; padding:7px 6px; border-bottom:1px solid var(--line); cursor:pointer; border-radius:6px; }
+  .svc:hover { background:#f6f8fc; } .svc.sel { background:#eef4ff; }
+  .svc .n { flex:1; min-width:0; font-weight:600; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .svc .m { font-size:12px; color:var(--muted); text-align:right; white-space:nowrap; } .svc .m b { color:var(--text); }
+  .dotc { display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--warm); flex:none; }
+  .s-healthy{background:var(--ok);} .s-LOW{background:var(--low);} .s-MEDIUM{background:var(--med);} .s-HIGH{background:var(--high);} .s-CRITICAL{background:var(--crit);} .s-silent{background:var(--silent);}
+  /* incidents */
+  #feed { display:flex; flex-direction:column; gap:8px; max-height:420px; overflow:auto; }
+  .an { border:1px solid var(--line); border-left:5px solid var(--warm); border-radius:8px; padding:8px 10px; cursor:pointer; }
+  .an:hover { background:#f6f8fc; } .an.resolved { opacity:.7; }
+  .an .t { display:flex; align-items:center; gap:6px; margin-bottom:3px; } .an .ti { font-size:13px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  .an .tm { font-size:12px; color:var(--muted); margin-left:auto; }
+  .c-LOW{border-left-color:var(--low);} .c-MEDIUM{border-left-color:var(--med);} .c-HIGH{border-left-color:var(--high);} .c-CRITICAL{border-left-color:var(--crit);}
   .badge { display:inline-block; font-size:10px; font-weight:700; padding:1px 7px; border-radius:4px; color:#fff; vertical-align:middle; margin-right:4px; }
   .b-LOW{background:var(--low);} .b-MEDIUM{background:var(--med);} .b-HIGH{background:var(--high);} .b-CRITICAL{background:var(--crit);} .b-RESOLVED{background:var(--ok);} .b-NEW{background:var(--accent);} .b-gray{background:var(--warm);}
-  #feed { display:flex; flex-direction:column; gap:8px; max-height:340px; overflow:auto; }
-  .an { border:1px solid var(--line); border-left:5px solid var(--warm); border-radius:8px; padding:8px 10px; }
-  .an.sel { background:#f3f7ff; border-color:var(--accent); } .an.resolved { opacity:.65; }
-  .an .t { display:flex; align-items:center; gap:6px; flex-wrap:wrap; } .an .sub { font-size:12px; color:var(--muted); margin:3px 0 6px; }
-  .an button { background:var(--accent); color:#fff; border:0; border-radius:6px; padding:4px 10px; cursor:pointer; font:inherit; font-size:12px; }
-  .c-LOW{border-left-color:var(--low);} .c-MEDIUM{border-left-color:var(--med);} .c-HIGH{border-left-color:var(--high);} .c-CRITICAL{border-left-color:var(--crit);}
-  .grid4 { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin-bottom:10px; }
-  @media (max-width:1100px) { .grid4 { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+  /* detection quality */
+  details.dq { background:var(--card); border:1px solid var(--line); border-radius:10px; }
+  details.dq > summary { cursor:pointer; padding:12px 16px; font-size:12px; text-transform:uppercase; letter-spacing:.8px; color:var(--muted); font-weight:600; }
+  .dqbody { padding:0 16px 16px; display:flex; flex-direction:column; gap:16px; }
+  .ks { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
+  .ks div { text-align:center; } .ks b { display:block; font-size:28px; line-height:1.1; } .ks span { font-size:11px; text-transform:uppercase; color:var(--muted); letter-spacing:.6px; }
+  .sens { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--muted); }
+  footer.pipe { display:flex; flex-wrap:wrap; align-items:center; gap:6px; justify-content:center; font-size:12px; }
+  footer.pipe span.st { background:var(--bg); border:1px solid var(--line); padding:4px 10px; border-radius:999px; font-weight:600; } footer.pipe i { color:var(--muted); font-style:normal; }
+  /* drawer */
+  #scrim { position:fixed; inset:0; background:rgba(15,25,45,.35); opacity:0; pointer-events:none; transition:opacity .2s; z-index:20; }
+  #scrim.open { opacity:1; pointer-events:auto; }
+  #drawer { position:fixed; top:0; right:0; bottom:0; width:min(620px,100vw); background:var(--card); z-index:25; transform:translateX(100%); transition:transform .25s; box-shadow:-10px 0 30px rgba(20,30,50,.2); display:flex; flex-direction:column; }
+  #drawer.open { transform:none; }
+  #drawer .dh { display:flex; align-items:center; padding:12px 16px; border-bottom:1px solid var(--line); font-weight:700; }
+  #drawer .dh button { margin-left:auto; background:none; border:0; font-size:22px; cursor:pointer; color:var(--muted); line-height:1; }
+  #detail { padding:14px 16px 30px; overflow:auto; flex:1; }
+  .grid4 { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin-bottom:10px; }
   .box { background:var(--bg); border-radius:8px; padding:8px 10px; } .box h4 { margin:0 0 4px; font-size:11px; color:var(--muted); letter-spacing:.8px; }
-  h3 { font-size:12px; text-transform:uppercase; letter-spacing:.8px; color:var(--muted); margin:14px 0 6px; }
-  table { width:100%; border-collapse:collapse; font-size:13px; } th,td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
-  th { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.6px; }
-  tr.click { cursor:pointer; } tr.click:hover td { background:#f6f8fc; } tr.sel td { background:#eef4ff; }
+  h3 { font-size:12px; text-transform:uppercase; letter-spacing:.8px; color:var(--muted); margin:16px 0 6px; }
   code, pre { font-family:ui-monospace,Consolas,monospace; font-size:12px; }
   pre { background:#f4f6fa; border:1px solid var(--line); padding:6px 8px; border-radius:6px; margin:4px 0; white-space:pre-wrap; word-break:break-word; }
-  .tl { list-style:none; margin:0; padding:0; max-height:200px; overflow:auto; } .tl li { font-size:12px; padding:3px 0; border-bottom:1px dashed var(--line); }
+  .tl { list-style:none; margin:0; padding:0; max-height:220px; overflow:auto; } .tl li { font-size:12px; padding:3px 0; border-bottom:1px dashed var(--line); }
   .ts { color:var(--muted); font-family:ui-monospace,Consolas,monospace; margin-right:6px; }
-  .hint { background:#eef4ff; border-left:4px solid var(--accent); padding:6px 10px; border-radius:4px; margin-top:4px; }
+  .hint { background:#eef4ff; border-left:4px solid var(--accent); padding:6px 10px; border-radius:4px; margin-top:6px; }
   .chip { display:inline-block; padding:1px 8px; margin:2px 4px 2px 0; border-radius:999px; font-size:12px; border:1px solid var(--line); background:var(--bg); }
   .chip.impacted { border-color:var(--crit); color:var(--crit); } .chip.at_risk { border-color:var(--med); color:var(--med); }
-  .dotc { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:6px; background:var(--warm); }
-  .s-healthy{background:var(--ok);} .s-LOW{background:var(--low);} .s-MEDIUM{background:var(--med);} .s-HIGH{background:var(--high);} .s-CRITICAL{background:var(--crit);} .s-silent{background:var(--silent);}
-  #act { list-style:none; margin:0; padding:0; max-height:340px; overflow:auto; } #act li { padding:6px 0; border-bottom:1px solid var(--line); font-size:13px; }
-  .muted { color:var(--muted); }
-  footer.pipe { display:flex; flex-wrap:wrap; align-items:center; gap:6px; justify-content:center; padding:14px; background:var(--card); border:1px solid var(--line); border-radius:10px; font-size:12px; }
-  footer.pipe span.st { background:var(--bg); border:1px solid var(--line); padding:4px 10px; border-radius:999px; font-weight:600; } footer.pipe i { color:var(--muted); font-style:normal; }
-  #toast { position:fixed; right:16px; bottom:16px; background:#1b2333; color:#fff; padding:8px 14px; border-radius:8px; font-size:13px; display:none; z-index:20; }
+  table { width:100%; border-collapse:collapse; font-size:12px; } th,td { text-align:left; padding:5px 6px; border-bottom:1px solid var(--line); vertical-align:top; } th { color:var(--muted); font-size:11px; text-transform:uppercase; }
+  /* toasts */
+  #toasts { position:fixed; top:64px; right:16px; z-index:50; display:flex; flex-direction:column; gap:8px; width:min(360px,calc(100vw - 32px)); }
+  .toast { background:#fff; border:1px solid var(--line); border-left:6px solid var(--warm); border-radius:8px; box-shadow:0 8px 24px rgba(20,30,50,.25); padding:10px 12px; }
+  .toast.c-CRITICAL{border-left-color:var(--crit);} .toast.c-HIGH{border-left-color:var(--high);} .toast.c-MEDIUM{border-left-color:var(--med);} .toast.c-LOW{border-left-color:var(--low);}
+  .toast .tt { font-size:13px; margin:4px 0 8px; } .toast .row { display:flex; gap:8px; align-items:center; }
+  .toast button { border:0; border-radius:6px; padding:4px 12px; cursor:pointer; font:inherit; font-size:12px; }
+  .toast .open { background:var(--accent); color:#fff; } .toast .x { background:none; color:var(--muted); margin-left:auto; font-size:16px; padding:0 4px; }
+  #toast { position:fixed; left:50%; transform:translateX(-50%); bottom:16px; background:#1b2333; color:#fff; padding:8px 14px; border-radius:8px; font-size:13px; display:none; z-index:60; }
 </style>
 </head>
 <body>
-<aside>
-  <div class="brand">Sentinel<span>AI</span></div>
-  <div class="tag">Healthcare Operations Intelligence</div>
-  <nav>
-    <a href="#overview">Overview</a>
-    <a href="#behavior">System Behavior</a>
-    <a href="#anomalies">Active Anomalies</a>
-    <a href="#insight">Anomaly Insight</a>
-    <a href="#services">Services</a>
-    <a href="#activity">Live Activity</a>
-    <a href="#pipeline">Pipeline</a>
-  </nav>
-  <div class="sidefoot">
-    <div><span>AWS</span><b id="aws">–</b></div>
-    <div><span>LLM</span><b id="llm">–</b></div>
-    <div><span>PHI redacted</span><b id="phi">–</b></div>
-  </div>
-</aside>
+<header>
+  <div><div class="brand">Sentinel<span>AI</span></div><div class="tag">Healthcare Operations Intelligence</div></div>
+  <span class="grow"></span>
+  <span class="meta">AWS <b id="aws">–</b> · LLM <b id="llm">–</b> · PHI redacted <b id="phi">–</b></span>
+  <span id="live" class="live"><span class="dot"></span><span id="liveText">CONNECTING</span></span>
+  <button id="alertBtn">Enable desktop alerts</button>
+  <details class="drill" id="drill">
+    <summary>Run Failure Drill ▾</summary>
+    <div class="drillmenu">
+      <div class="warn">TESTING TOOL — injects simulated faults into the synthetic log stream. Not part of monitoring.</div>
+      <button data-s="db_degradation"><b>Database slowdown</b><span>Database latency climbs, then services that depend on it start timing out.</span></button>
+      <button data-s="auth_outage"><b>Authentication outage</b><span>The auth service rejects tokens and the patient portal errors follow.</span></button>
+      <button data-s="silent_service"><b>Service stops logging</b><span>The notification service goes completely quiet.</span></button>
+      <button data-s="noisy_blip"><b>Short error spike, should not alert</b><span>One service errors for a few seconds only; the persistence check should ignore it.</span></button>
+      <button data-s="recover"><b>Restore normal</b><span>All services return to normal; open incidents resolve after a hold period.</span></button>
+    </div>
+  </details>
+</header>
 
-<div class="wrap">
-  <div class="top">
-    <div><h1>SentinelAI</h1><div class="sub">Healthcare Operations Intelligence</div></div>
-    <span class="grow"></span>
-    <span id="live" class="live"><span class="dot"></span><span id="liveText">CONNECTING</span></span>
-    <details class="demo" id="demo">
-      <summary>Demo ▾</summary>
-      <div class="menu">
-        <button data-s="db_degradation">Database degradation</button>
-        <button data-s="auth_outage">Auth outage</button>
-        <button data-s="silent_service">Silent service</button>
-        <button data-s="noisy_blip">Noisy blip</button>
-        <button data-s="recover">Recover all</button>
-      </div>
-    </details>
+<div id="banner"><span class="txt" id="bannerTxt">Waiting for data…</span><button id="bannerBtn">Investigate</button></div>
+
+<main>
+  <div class="kpis">
+    <div class="kpi"><div class="l">Events processed</div><div class="v" id="k2">–</div><div class="s">lines in the current sliding window</div></div>
+    <div class="kpi"><div class="l">Rolling error rate</div><div class="v" id="k3">–</div><div class="s" id="k3s"></div></div>
+    <div class="kpi"><div class="l">Active anomalies</div><div class="v" id="k4">–</div><div class="s" id="k4s"></div></div>
   </div>
 
-  <main>
-    <section id="overview" class="row r4">
-      <div class="card kpi"><h2>System Health</h2><div class="v" id="k1">–</div><div class="s" id="k1s"></div></div>
-      <div class="card kpi"><h2>Events Processed</h2><div class="v" id="k2">–</div><div class="s" id="k2s">lines in the current sliding window</div></div>
-      <div class="card kpi"><h2>Rolling Error Rate</h2><div class="v" id="k3">–</div><div class="s" id="k3s"></div></div>
-      <div class="card kpi"><h2>Active Anomalies</h2><div class="v" id="k4">–</div><div class="s" id="k4s"></div></div>
+  <div class="areas">
+    <section class="card" id="services">
+      <h2>Service health</h2>
+      <div id="svcList"><span class="muted">waiting for data…</span></div>
     </section>
 
-    <section class="card keystats" id="stats">
-      <h2>Key result — noise vs. signal</h2>
+    <section class="card" id="behavior">
+      <h2>Live — <span id="selName">–</span>
+        <span class="tabs" id="tabs"><button data-m="err" class="on">Error Rate</button><button data-m="lat">Latency</button><button data-m="vol">Traffic</button></span></h2>
+      <div class="chartbox"><canvas id="chart"></canvas></div>
+    </section>
+
+    <section class="card" id="anomalies">
+      <h2>Incidents</h2>
+      <div id="feed"><span class="muted">No incidents.</span></div>
+    </section>
+  </div>
+
+  <details class="dq" id="dq">
+    <summary>Detection quality</summary>
+    <div class="dqbody">
       <div class="ks">
         <div><b id="stNaive">–</b><span>Naive alerts</span></div>
         <div><b id="stInc">–</b><span>SentinelAI incidents</span></div>
         <div><b id="stNotif">–</b><span>SentinelAI notifications</span></div>
         <div><b id="stRed">–</b><span id="stRedL">Fewer alerts</span></div>
-        <div><b id="stLat" style="font-size:18px;line-height:1.5">–</b><span>Detection latency</span></div>
+        <div><b id="stLat" style="font-size:16px;line-height:1.6">–</b><span>Detection latency</span></div>
       </div>
-    </section>
-
-    <div class="row r21">
-      <section class="card" id="behavior">
-        <h2>System Behavior — <select class="svc" id="svcSel"></select>
-          <span class="tabs" id="tabs"><button data-m="err" class="on">Error Rate</button><button data-m="lat">Latency</button><button data-m="vol">Traffic</button></span></h2>
-        <div class="chartbox"><canvas id="chart"></canvas></div>
-        <div class="sens">Sensitivity (open z): <input type="range" id="sens" min="2" max="5" step="0.5" value="3"> <b id="sensVal">–</b> <span>lower = more sensitive (shows a value once you set it)</span></div>
-      </section>
-      <section class="card" id="anomalies">
-        <h2>Active Anomalies</h2>
-        <div id="feed"><span class="muted">No anomalies.</span></div>
-      </section>
+      <div class="sens">Sensitivity (open z): <input type="range" id="sens" min="2" max="5" step="0.5" value="3"> <b id="sensVal">–</b> <span>lower = more sensitive (shows a value once you set it)</span></div>
+      <footer class="pipe">
+        <span class="st">Collector</span><i>→</i><span class="st">Redact PHI</span><i>→</i><span class="st">Patterns</span><i>→</i><span class="st">Sliding Window</span><i>→</i>
+        <span class="st">Robust Baseline</span><i>→</i><span class="st">Detectors</span><i>→</i><span class="st">Incidents</span><i>→</i><span class="st">Notify</span>
+      </footer>
     </div>
+  </details>
+</main>
 
-    <div class="row r21">
-      <section class="card" id="insight">
-        <h2>Anomaly Insight</h2>
-        <div id="detail"><span class="muted">Press “Investigate” on an anomaly.</span></div>
-      </section>
-      <section class="card" id="activity">
-        <h2>Live Activity</h2>
-        <ul id="act"><li class="muted">No activity yet.</li></ul>
-      </section>
-    </div>
-
-    <section class="card" id="services">
-      <h2>Services</h2>
-      <table><thead><tr><th>Service</th><th>Status</th><th>Error rate (baseline)</th><th>p95 latency</th><th>Volume (window)</th></tr></thead><tbody id="svcRows"><tr><td colspan="5" class="muted">waiting for data…</td></tr></tbody></table>
-    </section>
-
-    <footer class="pipe" id="pipeline">
-      <span class="st">Collector</span><i>→</i><span class="st">Redact PHI</span><i>→</i><span class="st">Patterns</span><i>→</i><span class="st">Sliding Window</span><i>→</i>
-      <span class="st">Robust Baseline</span><i>→</i><span class="st">Detectors</span><i>→</i><span class="st">Incidents</span><i>→</i><span class="st">Notify</span>
-    </footer>
-  </main>
-</div>
+<div id="scrim"></div>
+<aside id="drawer" role="dialog" aria-label="Incident detail">
+  <div class="dh"><span>Incident detail</span><button id="drawerClose" aria-label="Close">×</button></div>
+  <div id="detail"></div>
+</aside>
+<div id="toasts"></div>
 <div id="toast"></div>
 
 <script>
@@ -190,7 +189,7 @@ const SEV = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
 const COLORS = { LOW:"#d4a017", MEDIUM:"#e8890c", HIGH:"#e0561f", CRITICAL:"#d62839" };
 
 // ---- state ----
-const state = { services:{}, incidents:{}, frames:[], selService:null, selIncident:null, detail:null, wsOpen:false, metric:"err", activity:[] };
+const state = { services:{}, incidents:{}, frames:[], selService:null, selIncident:null, detail:null, wsOpen:false, metric:"err", loaded:false, unseen:{} };
 
 // ---- helpers ----
 const $ = id => document.getElementById(id);
@@ -205,8 +204,6 @@ async function api(path, opts) {
   return r.json();
 }
 function toast(msg) { const t = $("toast"); t.textContent = msg; t.style.display = "block"; clearTimeout(toast.h); toast.h = setTimeout(() => t.style.display = "none", 3500); }
-
-// ---- derived numbers (all from API data) ----
 function groupRatio(g) {
   let best = null;
   for (const m of (g.incidents || [])) for (const s of (m.signals || [])) {
@@ -216,58 +213,71 @@ function groupRatio(g) {
   }
   return best ? { ratio: best.value / best.baseline_median, sig: best } : null;
 }
+function sortedIncidents() {
+  return Object.values(state.incidents).sort((a, b) => {
+    const ao = a.state === "OPEN" ? 0 : 1, bo = b.state === "OPEN" ? 0 : 1;
+    if (ao !== bo) return ao - bo;
+    if (sevIdx(b.current_severity) !== sevIdx(a.current_severity)) return sevIdx(b.current_severity) - sevIdx(a.current_severity);
+    if (!!b.has_new_pattern !== !!a.has_new_pattern) return b.has_new_pattern ? 1 : -1;
+    return (b.opened_at || 0) - (a.opened_at || 0);
+  });
+}
+
+// ---- status banner ----
+function renderBanner() {
+  const open = sortedIncidents().filter(i => i.state === "OPEN");
+  const b = $("banner"), btn = $("bannerBtn");
+  if (open.length) {
+    const g = open[0];
+    b.style.background = COLORS[g.current_severity] || "var(--crit)";
+    const n = (g.affected_services || []).length;
+    $("bannerTxt").textContent = `${g.current_severity}: ${g.title} — ${n} service${n === 1 ? "" : "s"} affected` + (open.length > 1 ? ` (+${open.length - 1} more open)` : "");
+    btn.style.display = "block"; btn.dataset.id = g.id;
+  } else {
+    btn.style.display = "none";
+    if (state.loaded) { b.style.background = "var(--ok)"; $("bannerTxt").textContent = "All systems normal"; }
+    else { b.style.background = "var(--warm)"; $("bannerTxt").textContent = "Waiting for data…"; }
+  }
+}
+$("bannerBtn").onclick = () => openIncident($("bannerBtn").dataset.id);
 
 // ---- KPIs ----
 function renderKpis() {
   const svcs = Object.entries(state.services);
   const open = Object.values(state.incidents).filter(i => i.state === "OPEN");
-  let worst = -1; open.forEach(i => worst = Math.max(worst, sevIdx(i.current_severity)));
-  const healthy = svcs.filter(([, s]) => s.status === "healthy").length;
-  const k1 = $("k1");
-  if (worst < 0) { k1.textContent = "Healthy"; k1.style.color = "var(--ok)"; }
-  else { k1.textContent = SEV[worst]; k1.style.color = COLORS[SEV[worst]]; }
-  $("k1s").textContent = svcs.length ? `${healthy} of ${svcs.length} services healthy` : "";
-
   const withVol = svcs.filter(([, s]) => s.volume != null);
-  const totalVol = withVol.reduce((a, [, s]) => a + s.volume, 0);
-  $("k2").textContent = withVol.length ? totalVol.toLocaleString() : "–";
-
+  $("k2").textContent = withVol.length ? withVol.reduce((a, [, s]) => a + s.volume, 0).toLocaleString() : "–";
   const errNow = withVol.filter(([, s]) => s.error_rate != null);
   const errVol = errNow.reduce((a, [, s]) => a + s.volume, 0);
   if (errVol > 0) {
-    const now = errNow.reduce((a, [, s]) => a + s.error_rate * s.volume, 0) / errVol;
-    $("k3").textContent = pct(now);
+    $("k3").textContent = pct(errNow.reduce((a, [, s]) => a + s.error_rate * s.volume, 0) / errVol);
     const bs = errNow.filter(([, s]) => s.baseline && s.baseline.ready && s.baseline.error_rate_median != null);
     const bv = bs.reduce((a, [, s]) => a + s.volume, 0);
-    $("k3s").textContent = bv > 0 ? "baseline " + pct(bs.reduce((a, [, s]) => a + s.baseline.error_rate_median * s.volume, 0) / bv) + " (volume-weighted)" : "baseline warming up";
+    $("k3s").textContent = bv > 0 ? "baseline " + pct(bs.reduce((a, [, s]) => a + s.baseline.error_rate_median * s.volume, 0) / bv) : "baseline warming up";
   } else { $("k3").textContent = "–"; $("k3s").textContent = ""; }
-
-  $("k4").textContent = Object.keys(state.incidents).length || svcs.length ? open.length : "–";
+  $("k4").textContent = state.loaded ? open.length : "–";
   const hc = open.filter(i => i.current_severity === "HIGH" || i.current_severity === "CRITICAL").length;
   $("k4s").textContent = open.length ? `${hc} HIGH/CRITICAL` : "no open incidents";
 }
 
-// ---- services table + selector ----
+// ---- service list ----
 function renderServices() {
   const names = Object.keys(state.services).sort();
   if (!names.length) return;
-  const sel = $("svcSel");
-  if (sel.options.length !== names.length) { sel.innerHTML = names.map(n => `<option>${esc(n)}</option>`).join(""); }
-  sel.value = state.selService;
-  $("svcRows").innerHTML = names.map(n => {
-    const s = state.services[n], st = s.status || "healthy", b = s.baseline;
-    const base = b && b.ready && b.error_rate_median != null ? ` <span class="muted">(base ${pct(b.error_rate_median)})</span>` : ' <span class="muted">(warming up)</span>';
-    return `<tr class="click ${n === state.selService ? "sel" : ""}" data-n="${esc(n)}"><td><b>${esc(n)}</b></td><td><span class="dotc s-${esc(st)}"></span>${esc(String(st).replace("_", " "))}</td>
-      <td>${pct(s.error_rate)}${base}</td><td>${s.p95_latency == null ? "–" : Math.round(s.p95_latency) + " ms"}</td><td>${s.volume ?? "–"}</td></tr>`;
+  $("selName").textContent = state.selService || "–";
+  $("svcList").innerHTML = names.map(n => {
+    const s = state.services[n], st = s.status || "healthy";
+    return `<div class="svc ${n === state.selService ? "sel" : ""}" data-n="${esc(n)}" title="${esc(String(st).replace("_", " "))}">
+      <span class="dotc s-${esc(st)}"></span><span class="n">${esc(n)}</span>
+      <span class="m">err <b>${pct(s.error_rate)}</b><br>p95 <b>${s.p95_latency == null ? "–" : Math.round(s.p95_latency) + " ms"}</b></span></div>`;
   }).join("");
-  $("svcRows").querySelectorAll("tr").forEach(el => el.onclick = () => selectService(el.dataset.n));
+  $("svcList").querySelectorAll(".svc").forEach(el => el.onclick = () => selectService(el.dataset.n));
 }
 function selectService(n) { state.selService = n; renderServices(); updateChart(); }
 function mergeServices(obj) {
   for (const [n, v] of Object.entries(obj)) state.services[n] = Object.assign(state.services[n] || {}, v);
   if (!state.selService) { const k = Object.keys(state.services).sort()[0]; if (k) state.selService = k; }
 }
-$("svcSel").onchange = e => selectService(e.target.value);
 
 // ---- chart ----
 let chart;
@@ -331,7 +341,6 @@ function updateChart() {
   chart.data.datasets[2].data = val;
   chart.data.datasets[2].label = M.label;
   chart.options.scales.y.ticks.callback = M.tick;
-  // incident-open markers for groups touching this service
   const marks = [];
   Object.values(state.incidents).forEach(g => {
     if (!(g.affected_services || []).includes(n) || !g.opened_at) return;
@@ -354,29 +363,18 @@ $("tabs").querySelectorAll("button").forEach(b => b.onclick = () => {
   updateChart();
 });
 
-// ---- anomalies list ----
-function sortedIncidents() {
-  return Object.values(state.incidents).sort((a, b) => {
-    const ao = a.state === "OPEN" ? 0 : 1, bo = b.state === "OPEN" ? 0 : 1;
-    if (ao !== bo) return ao - bo;
-    if (sevIdx(b.current_severity) !== sevIdx(a.current_severity)) return sevIdx(b.current_severity) - sevIdx(a.current_severity);
-    if (!!b.has_new_pattern !== !!a.has_new_pattern) return b.has_new_pattern ? 1 : -1;
-    return (b.opened_at || 0) - (a.opened_at || 0);
-  });
-}
+// ---- incident list ----
 function renderFeed() {
   const list = sortedIncidents();
-  renderKpis();
-  if (!list.length) { $("feed").innerHTML = '<span class="muted">No anomalies.</span>'; return; }
+  renderKpis(); renderBanner();
+  if (!list.length) { $("feed").innerHTML = '<span class="muted">No incidents.</span>'; updateChart(); return; }
   $("feed").innerHTML = list.map(i => {
-    const resolved = i.state === "RESOLVED", r = groupRatio(i);
-    return `<div class="an c-${esc(resolved ? i.max_severity : i.current_severity)} ${resolved ? "resolved" : ""} ${i.id === state.selIncident ? "sel" : ""}">
-      <div class="t"><span class="badge b-${resolved ? "RESOLVED" : esc(i.current_severity)}">${resolved ? "RESOLVED" : esc(i.current_severity)}</span>${i.has_new_pattern ? '<span class="badge b-NEW">NEW</span>' : ""}<b>${esc(i.origin || (i.affected_services || [])[0] || "")}</b></div>
-      <div class="sub">${esc(i.title)}<br>${fmtT(i.opened_at)}${r ? ` · ${r.ratio.toFixed(1)}× baseline` : ""} · ${(i.affected_services || []).length} service(s)${i.notified ? " · notified" : ""}</div>
-      <button data-id="${esc(i.id)}">Investigate</button>
-    </div>`;
+    const resolved = i.state === "RESOLVED";
+    return `<div class="an c-${esc(resolved ? i.max_severity : i.current_severity)} ${resolved ? "resolved" : ""}" data-id="${esc(i.id)}">
+      <div class="t"><span><span class="badge b-${resolved ? "RESOLVED" : esc(i.current_severity)}">${resolved ? "RESOLVED" : esc(i.current_severity)}</span>${i.has_new_pattern ? '<span class="badge b-NEW">NEW</span>' : ""}</span><span class="tm">${fmtT(i.opened_at)}</span></div>
+      <div class="ti">${esc(i.title)}</div></div>`;
   }).join("");
-  $("feed").querySelectorAll("button").forEach(el => el.onclick = () => { selectIncident(el.dataset.id); $("insight").scrollIntoView({ behavior:"smooth" }); });
+  $("feed").querySelectorAll(".an").forEach(el => el.onclick = () => openIncident(el.dataset.id));
   updateChart();
 }
 function upsertIncident(g) {
@@ -384,13 +382,22 @@ function upsertIncident(g) {
   renderFeed();
   if (g.id === state.selIncident) loadDetail(g.id);
 }
-async function selectIncident(id) { state.selIncident = id; renderFeed(); await loadDetail(id); }
-async function loadDetail(id) {
-  try { state.detail = await api("/incidents/" + encodeURIComponent(id)); renderDetail(); }
-  catch (e) { $("detail").innerHTML = '<span class="muted">' + esc(e.message) + "</span>"; }
-}
 
-// ---- insight panel ----
+// ---- drawer ----
+function openIncident(id) {
+  state.selIncident = id; state.detail = null;
+  delete state.unseen[id]; updateTitle();
+  $("detail").innerHTML = '<span class="muted">Loading…</span>';
+  $("drawer").classList.add("open"); $("scrim").classList.add("open");
+  loadDetail(id);
+}
+function closeDrawer() { state.selIncident = null; $("drawer").classList.remove("open"); $("scrim").classList.remove("open"); }
+$("drawerClose").onclick = closeDrawer; $("scrim").onclick = closeDrawer;
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeDrawer(); });
+async function loadDetail(id) {
+  try { const d = await api("/incidents/" + encodeURIComponent(id)); if (id !== state.selIncident) return; state.detail = d; renderDetail(); }
+  catch (e) { if (id === state.selIncident) $("detail").innerHTML = '<span class="muted">' + esc(e.message) + "</span>"; }
+}
 function renderDetail() {
   const d = state.detail;
   if (!d) return;
@@ -401,45 +408,71 @@ function renderDetail() {
   const p0 = (d.patterns || [])[0];
   const br = d.blast_radius || { nodes: [] };
   const byStatus = st => (br.nodes || []).filter(n => n.status === st).map(n => `<span class="chip ${st}">${esc(n.service)}</span>`).join("") || '<span class="muted">none</span>';
+  const pats = (d.patterns || []).map(p => `<tr><td>${p.is_new ? '<span class="badge b-NEW">NEW</span>' : ""}<code>${esc(p.template)}</code><div class="muted">${esc(p.service)}</div></td>
+      <td>${p.count}</td><td>${p.expected_per_min == null ? "–" : (+p.expected_per_min).toFixed(1)}</td><td>${p.surge_ratio == null ? "–" : (+p.surge_ratio).toFixed(1) + "×"}</td></tr>`).join("");
   const story = (d.story || []).map(e => `<li><span class="ts">${fmtT(e.t)}</span><b>${esc(e.service)}</b> ${esc(e.event)}${e.severity ? " → " + esc(e.severity) : ""} <span class="muted">${esc(e.detail || "")}</span></li>`).join("");
   const list = a => (a || []).map(x => `<li>${esc(x)}</li>`).join("");
   $("detail").innerHTML = `
     <div style="font-size:16px;font-weight:600;margin-bottom:10px"><span class="badge b-${resolved ? "RESOLVED" : esc(d.current_severity)}">${resolved ? "RESOLVED" : esc(d.current_severity)}</span>${d.has_new_pattern ? '<span class="badge b-NEW">NEW</span>' : ""}${esc(d.title)}</div>
     <div class="grid4">
-      <div class="box"><h4>DETECTED</h4>${esc(d.what)}<div class="muted">first flagged ${fmtT(d.opened_at)} · ${resolved ? "lasted" : "open for"} ${fmtD(d.duration_s)} ·${d.failed_ops ?? "–"} failed ops</div></div>
+      <div class="box"><h4>DETECTED</h4>${esc(d.what)}<div class="muted">first flagged ${fmtT(d.opened_at)} · ${resolved ? "lasted" : "open for"} ${fmtD(d.duration_s)} · ${d.failed_ops ?? "–"} failed ops</div></div>
       <div class="box"><h4>DEVIATION</h4>${d.peak_z == null ? "–" : "z = " + (+d.peak_z).toFixed(1)}${r ? `<br>${r.ratio.toFixed(1)}× baseline` : ""}<div class="muted">${r ? esc(r.sig.detail || "") : ""}</div></div>
-      <div class="box"><h4>PATTERN</h4>${p0 ? `${p0.is_new ? '<span class="badge b-NEW">NEW</span>' : ""}<code>${esc(p0.template)}</code><div class="muted">${p0.count} in window${p0.expected_per_min == null ? "" : ", normally " + (+p0.expected_per_min).toFixed(1) + "/min"} · ${esc(p0.service)}</div>` : '<span class="muted">no pattern data</span>'}
-        <div class="hint"><b>Probable cause:</b> ${esc(d.hint || "–")}</div></div>
+      <div class="box"><h4>PATTERN</h4>${p0 ? `${p0.is_new ? '<span class="badge b-NEW">NEW</span>' : ""}<code>${esc(p0.template)}</code><div class="muted">${p0.count} in window${p0.expected_per_min == null ? "" : ", normally " + (+p0.expected_per_min).toFixed(1) + "/min"} · ${esc(p0.service)}</div>` : '<span class="muted">no pattern data</span>'}</div>
       <div class="box"><h4>IMPACT</h4>Origin: <b>${esc(br.origin || d.origin || "–")}</b><br>Impacted: ${byStatus("impacted")}<br>At risk: ${byStatus("at_risk")}</div>
     </div>
     <h3>Timeline</h3><ul class="tl">${story || '<li class="muted">–</li>'}</ul>
+    <h3>Probable cause</h3>
+    ${pats ? `<table><tr><th>Pattern</th><th>Count</th><th>Normal/min</th><th>Surge</th></tr>${pats}</table>` : '<span class="muted">no pattern data</span>'}
+    <div class="hint"><b>Hint:</b> ${esc(d.hint || "–")}</div>
     <h3>Samples (redacted)</h3>${(d.samples || []).map(s => `<pre>${esc(s)}</pre>`).join("") || '<span class="muted">–</span>'}
     <h3>Explanation <span class="badge ${ex.source === "llm" ? "b-NEW" : "b-gray"}">${esc(label)}</span></h3>
     <div>${esc(ex.summary || "–")}</div>
     ${ex.probable_cause ? `<div style="margin-top:4px"><b>Probable cause:</b> ${esc(ex.probable_cause)}</div>` : ""}
     ${(ex.recommended_checks || []).length ? `<div style="margin-top:4px"><b>Recommended checks:</b><ul>${list(ex.recommended_checks)}</ul></div>` : ""}
     ${ex.confidence ? `<div class="muted">confidence: ${esc(ex.confidence)}</div>` : ""}
+    <h3>Member incidents</h3>
+    <table><tr><th>Service</th><th>State</th><th>Severity</th><th>What</th></tr>${(d.incidents || []).map(m => `<tr><td>${esc(m.service)}</td><td>${esc(m.state)}</td><td>${esc(m.current_severity)}</td><td>${esc(m.what)}</td></tr>`).join("")}</table>
     ${d.what_if ? `<h3>What-if</h3><pre>${esc(JSON.stringify(d.what_if, null, 2))}</pre><div class="muted">Projection if the trend continues — not a prediction.</div>` : ""}`;
 }
 
-// ---- live activity (only real WebSocket events) ----
-function logActivity(type, data) {
-  let text = null, badge = "b-gray", tag = "";
-  if (type === "incident_opened") { text = `Incident opened: ${data.title}`; badge = "b-" + data.current_severity; tag = data.current_severity; }
-  else if (type === "incident_updated") {
-    const prev = state.incidents[data.id];
-    if (prev && sevIdx(data.current_severity) > sevIdx(prev.current_severity)) { text = `Escalated ${prev.current_severity} → ${data.current_severity}: ${data.title}`; badge = "b-" + data.current_severity; tag = data.current_severity; }
-  } else if (type === "incident_resolved") { text = `Resolved: ${data.title}`; badge = "b-RESOLVED"; tag = "RESOLVED"; }
-  else if (type === "notification") {
-    const g = state.incidents[data.incident_id];
-    const ch = data.channel === "dryrun" ? "Dry-run notification recorded" : data.channel === "sns" ? "SNS notification " + (data.ok ? "sent" : "FAILED") : "CloudWatch event " + (data.ok ? "sent" : "FAILED");
-    text = `${ch} (${data.severity})${g ? ": " + g.title : ""}`; tag = data.severity; badge = "b-" + data.severity;
-  }
-  if (!text) return;
-  state.activity.unshift({ t: Date.now() / 1000, text, badge, tag });
-  state.activity = state.activity.slice(0, 60);
-  $("act").innerHTML = state.activity.map(a => `<li><span class="ts">${fmtT(a.t)}</span>${a.tag ? `<span class="badge ${esc(a.badge)}">${esc(a.tag)}</span>` : ""}${esc(a.text)}</li>`).join("");
+// ---- notifications: toast + desktop + tab title (only from WebSocket "notification" messages) ----
+function updateTitle() {
+  const ids = Object.keys(state.unseen);
+  if (!ids.length) { document.title = "SentinelAI"; return; }
+  const worst = ids.reduce((w, k) => Math.max(w, sevIdx(state.unseen[k])), -1);
+  document.title = `(${ids.length}) ${SEV[worst] || "ALERT"} — SentinelAI`;
 }
+function showToast(sev, title, id, resolved, ok) {
+  const el = document.createElement("div");
+  el.className = "toast c-" + sev;
+  el.innerHTML = `<div class="row"><span class="badge b-${esc(sev)}">${esc(sev)}</span><b>${resolved ? "Resolved" : "Alert"}</b>${ok === false ? '<span class="muted">(delivery failed)</span>' : ""}<button class="x" aria-label="Dismiss">×</button></div>
+    <div class="tt">${esc(title)}</div><div class="row"><button class="open">Open</button></div>`;
+  const kill = () => el.remove();
+  el.querySelector(".x").onclick = kill;
+  el.querySelector(".open").onclick = () => { kill(); openIncident(id); };
+  $("toasts").appendChild(el);
+  setTimeout(kill, 10000);
+}
+async function handleNotification(d) {
+  if (d.channel === "cloudwatch") return; // CloudWatch is the audit stream (every state change), not an alert to a human
+  let g = state.incidents[d.incident_id];
+  if (!g) { try { g = await api("/incidents/" + encodeURIComponent(d.incident_id)); state.incidents[g.id] = g; renderFeed(); } catch (e) {} }
+  const resolved = !!g && g.state === "RESOLVED";
+  const title = g ? g.title : "Incident " + d.incident_id;
+  showToast(d.severity, title, d.incident_id, resolved, d.ok);
+  if (!resolved && d.incident_id !== state.selIncident) { state.unseen[d.incident_id] = d.severity; updateTitle(); }
+  if ("Notification" in window && Notification.permission === "granted") {
+    try {
+      const n = new Notification(`${resolved ? "Resolved" : d.severity} — SentinelAI`, { body: title });
+      n.onclick = () => { window.focus(); openIncident(d.incident_id); n.close(); };
+    } catch (e) {}
+  }
+}
+function syncAlertBtn() {
+  const b = $("alertBtn");
+  b.style.display = "Notification" in window && Notification.permission === "default" ? "inline-block" : "none";
+}
+$("alertBtn").onclick = async () => { try { await Notification.requestPermission(); } catch (e) {} syncAlertBtn(); };
 
 // ---- stats / health ----
 async function loadStats() {
@@ -470,7 +503,8 @@ async function loadServices() {
     const obj = {};
     arr.forEach(s => { obj[s.name] = s; });
     mergeServices(obj);
-    renderServices(); renderKpis();
+    state.loaded = true;
+    renderServices(); renderKpis(); renderBanner();
   } catch (e) {}
 }
 async function loadIncidents() {
@@ -478,6 +512,7 @@ async function loadIncidents() {
     const arr = await api("/incidents?status=all");
     state.incidents = {};
     arr.forEach(g => state.incidents[g.id] = g);
+    state.loaded = true;
     renderFeed();
     if (state.selIncident && state.incidents[state.selIncident]) loadDetail(state.selIncident);
   } catch (e) {}
@@ -504,18 +539,18 @@ function connectWS() {
   ws.onmessage = ev => {
     let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
     if (m.type === "metrics") pushFrame(m.data);
-    else if (m.type === "incident_opened" || m.type === "incident_updated" || m.type === "incident_resolved") { logActivity(m.type, m.data); upsertIncident(m.data); }
-    else if (m.type === "notification") { logActivity(m.type, m.data); loadStats(); }
+    else if (m.type === "incident_opened" || m.type === "incident_updated" || m.type === "incident_resolved") upsertIncident(m.data);
+    else if (m.type === "notification") { handleNotification(m.data); loadStats(); }
   };
   ws.onclose = () => { state.wsOpen = false; setConn("poll"); backoff = Math.min(backoff * 2, 10000); setTimeout(connectWS, backoff); };
   ws.onerror = () => { try { ws.close(); } catch (e) {} };
 }
 
 // ---- controls ----
-document.querySelectorAll("#demo .menu button").forEach(b => b.onclick = async () => {
-  $("demo").open = false;
-  try { await api("/simulate/" + b.dataset.s, { method:"POST" }); toast("Started: " + b.textContent); }
-  catch (e) { toast("Failed: " + e.message); }
+document.querySelectorAll("#drill .drillmenu button").forEach(b => b.onclick = async () => {
+  $("drill").open = false;
+  try { await api("/simulate/" + b.dataset.s, { method:"POST" }); toast("Drill started: " + b.querySelector("b").textContent); }
+  catch (e) { toast("Drill failed: " + e.message); }
 });
 $("sens").oninput = () => { $("sensVal").textContent = $("sens").value; };
 $("sens").onchange = async () => {
@@ -544,6 +579,7 @@ async function loadHistory() {
 (async function init() {
   initChart();
   setConn("poll");
+  syncAlertBtn();
   await loadServices();
   await loadHistory();
   await loadIncidents();
