@@ -30,8 +30,11 @@ created relative to the directory you run it from (hence: the repo root).
 
 | | URL |
 |---|---|
+| Dashboard | http://localhost:8000/ |
 | REST API (interactive docs) | http://localhost:8000/docs |
 | WebSocket | `ws://localhost:8000/ws` |
+
+The dashboard is served at http://localhost:8000/ (from `frontend/index.html`).
 
 A service is judged only after about **90 seconds** of traffic (the baseline has to warm up), so
 give it a minute and a half, then trigger a fault:
@@ -70,9 +73,47 @@ Every setting has a default and can be overridden by an environment variable or 
 
 _TBD: table of keys._
 
-## AWS least-privilege IAM policy
+## Notifications and AWS
 
-_TBD: Phase 6. Until then every notification is a dry run (recorded, nothing is sent)._
+Every notification payload is appended, as one JSON line, to `data/notifications_dryrun.jsonl`
+(payloads are redacted a second time on the way out). That is the default and needs no AWS.
+
+CloudWatch Logs (every incident state change) and SNS (HIGH/CRITICAL opens and escalations, and
+the resolve of a group that notified) are used **only** when `AWS_ENABLED=true` **and** AWS
+credentials are found (environment variables, a profile or a role); otherwise it stays a dry
+run and logs a warning. Sending happens on a background worker with retries, so a slow or failing
+AWS call never delays detection or the dashboard. `/api/health` reports `aws: "live"|"dryrun"`.
+
+```
+AWS_ENABLED=true
+AWS_REGION=us-east-1
+CW_LOG_GROUP=/sentinel-ai/incidents
+CW_LOG_STREAM=demo
+SNS_TOPIC_ARN=arn:aws:sns:us-east-1:<account-id>:<topic>
+```
+
+Least-privilege IAM policy (replace the account id, region, group and topic):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
+      "Resource": [
+        "arn:aws:logs:us-east-1:<account-id>:log-group:/sentinel-ai/incidents",
+        "arn:aws:logs:us-east-1:<account-id>:log-group:/sentinel-ai/incidents:log-stream:*"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": "sns:Publish",
+      "Resource": "arn:aws:sns:us-east-1:<account-id>:<topic>"
+    }
+  ]
+}
+```
 
 ## Design decisions
 
