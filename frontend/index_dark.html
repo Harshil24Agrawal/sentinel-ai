@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SentinelAI</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg:#0b0f17; --panel:#121826; --panel2:#182033; --line:#243049; --text:#e4e9f2; --muted:#8a96ad;
+    --ok:#2ecc71; --low:#f1c40f; --med:#f39c12; --high:#e8622c; --crit:#e5383b; --silent:#9b59b6; --warm:#5b6b8a; --accent:#4da3ff;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  header { display:flex; align-items:center; gap:16px; flex-wrap:wrap; padding:12px 16px; background:var(--panel); border-bottom:1px solid var(--line); }
+  header h1 { font-size:18px; margin:0; letter-spacing:.5px; }
+  header h1 span { color:var(--accent); }
+  .grow { flex:1; }
+  .pill { display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px; font-weight:600; background:var(--panel2); border:1px solid var(--line); }
+  .dot { display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--crit); margin-right:6px; }
+  .dot.live { background:var(--ok); } .dot.poll { background:var(--low); }
+  main { display:grid; grid-template-columns: minmax(0,1.4fr) minmax(0,1fr); gap:12px; padding:12px 16px; }
+  @media (max-width: 1000px) { main { grid-template-columns:1fr; } }
+  .col { display:flex; flex-direction:column; gap:12px; min-width:0; }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px; min-width:0; }
+  section h2 { margin:0 0 10px; font-size:12px; text-transform:uppercase; letter-spacing:1px; color:var(--muted); }
+  #tiles { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:8px; }
+  .tile { background:var(--panel2); border:1px solid var(--line); border-left:5px solid var(--warm); border-radius:6px; padding:8px 10px; cursor:pointer; }
+  .tile:hover { border-color:var(--accent); }
+  .tile.sel { outline:2px solid var(--accent); }
+  .tile .n { font-weight:600; font-size:13px; } .tile .s { font-size:11px; color:var(--muted); text-transform:uppercase; }
+  .tile .m { font-size:12px; color:var(--muted); margin-top:4px; display:flex; justify-content:space-between; gap:6px; }
+  .tile .m b { color:var(--text); font-weight:600; }
+  .chartbox { position:relative; height:240px; }
+  .sens { display:flex; align-items:center; gap:8px; margin-top:8px; font-size:12px; color:var(--muted); }
+  #feed { display:flex; flex-direction:column; gap:8px; max-height:420px; overflow:auto; }
+  .card { background:var(--panel2); border:1px solid var(--line); border-left:5px solid var(--warm); border-radius:6px; padding:8px 10px; cursor:pointer; }
+  .card.sel { outline:2px solid var(--accent); }
+  .card.resolved { opacity:.6; }
+  .card .t { font-weight:600; } .card .sub { font-size:12px; color:var(--muted); margin-top:2px; }
+  .badge { display:inline-block; font-size:10px; font-weight:700; padding:1px 6px; border-radius:4px; margin-right:6px; color:#fff; vertical-align:middle; }
+  .badge.new { background:var(--accent); }
+  .b-LOW{background:var(--low);color:#222;} .b-MEDIUM{background:var(--med);color:#222;} .b-HIGH{background:var(--high);} .b-CRITICAL{background:var(--crit);}
+  .b-RESOLVED{background:var(--ok);color:#052;}
+  .c-LOW{border-left-color:var(--low)!important;} .c-MEDIUM{border-left-color:var(--med)!important;} .c-HIGH{border-left-color:var(--high)!important;} .c-CRITICAL{border-left-color:var(--crit)!important;}
+  .c-healthy{border-left-color:var(--ok)!important;} .c-warming_up{border-left-color:var(--warm)!important;} .c-silent{border-left-color:var(--silent)!important;}
+  .kv { display:grid; grid-template-columns:110px 1fr; gap:4px 10px; margin-bottom:8px; }
+  .kv div:nth-child(odd) { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.5px; padding-top:1px; }
+  h3 { font-size:12px; text-transform:uppercase; letter-spacing:1px; color:var(--muted); margin:14px 0 6px; }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th,td { text-align:left; padding:4px 6px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; }
+  code, pre { font-family:ui-monospace,Consolas,monospace; font-size:12px; }
+  pre { background:#0a0d14; border:1px solid var(--line); padding:6px 8px; border-radius:4px; margin:4px 0; white-space:pre-wrap; word-break:break-word; }
+  .tl { list-style:none; margin:0; padding:0; max-height:200px; overflow:auto; }
+  .tl li { font-size:12px; padding:2px 0; border-bottom:1px dashed var(--line); }
+  .tl .ts { color:var(--muted); font-family:ui-monospace,Consolas,monospace; margin-right:6px; }
+  .hint { background:#1c2a44; border-left:4px solid var(--accent); padding:6px 10px; border-radius:4px; }
+  .chip { display:inline-block; padding:1px 8px; margin:2px 4px 2px 0; border-radius:999px; font-size:12px; background:var(--panel2); border:1px solid var(--line); }
+  .chip.impacted { border-color:var(--crit); color:#ff9a9c; } .chip.at_risk { border-color:var(--med); color:#ffcf8a; } .chip.origin { font-weight:700; text-decoration:underline; }
+  .warn { font-size:11px; color:var(--low); }
+  button { background:var(--panel2); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:6px 10px; cursor:pointer; font:inherit; font-size:13px; }
+  button:hover { border-color:var(--accent); }
+  button.rec { border-color:var(--ok); }
+  #sim { display:flex; flex-wrap:wrap; gap:6px; }
+  #simmsg { font-size:12px; color:var(--muted); margin-top:6px; min-height:16px; }
+  .stats { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+  .stat { background:var(--panel2); border:1px solid var(--line); border-radius:6px; padding:8px; text-align:center; }
+  .stat b { display:block; font-size:22px; } .stat span { font-size:11px; color:var(--muted); text-transform:uppercase; }
+  .muted { color:var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Sentinel<span>AI</span></h1>
+  <span id="health" class="pill">Healthy</span>
+  <span class="grow"></span>
+  <span id="aws" class="pill">AWS: –</span>
+  <span id="llm" class="pill">LLM: –</span>
+  <span id="phi" class="pill">PHI redacted: 0</span>
+  <span id="conn" class="pill"><span class="dot" id="dot"></span><span id="connText">connecting…</span></span>
+</header>
+
+<main>
+  <div class="col">
+    <section>
+      <h2>Services</h2>
+      <div id="tiles"><span class="muted">waiting for data…</span></div>
+    </section>
+    <section>
+      <h2>Error rate — <span id="selName">–</span> (last 5 min, shaded = normal band)</h2>
+      <div class="chartbox"><canvas id="chart"></canvas></div>
+      <div class="sens">Sensitivity (open z): <input type="range" id="sens" min="2" max="5" step="0.5" value="3"> <b id="sensVal">3</b> <span class="muted">(lower = more sensitive)</span></div>
+    </section>
+    <section>
+      <h2>Incident feed</h2>
+      <div id="feed"><span class="muted">No incidents.</span></div>
+    </section>
+  </div>
+
+  <div class="col">
+    <section>
+      <h2>Simulation</h2>
+      <div id="sim">
+        <button data-s="db_degradation">DB degradation</button>
+        <button data-s="auth_outage">Auth outage</button>
+        <button data-s="silent_service">Silent service</button>
+        <button data-s="noisy_blip">Noisy blip</button>
+        <button data-s="recover" class="rec">Recover</button>
+      </div>
+      <div id="simmsg"></div>
+    </section>
+    <section>
+      <h2>Stats</h2>
+      <div class="stats">
+        <div class="stat"><b id="stNaive">–</b><span>Naive alerts</span></div>
+        <div class="stat"><b id="stInc">–</b><span>Sentinel incidents</span></div>
+        <div class="stat"><b id="stNotif">–</b><span>Notifications</span></div>
+      </div>
+      <div id="stLat" class="muted" style="margin-top:8px;font-size:12px"></div>
+    </section>
+    <section>
+      <h2>Incident detail</h2>
+      <div id="detail"><span class="muted">Select an incident.</span></div>
+    </section>
+  </div>
+</main>
+
+<script>
+"use strict";
+// ---- config ----
+const params = new URLSearchParams(location.search);
+let BASE = params.get("api") || (location.protocol.startsWith("http") ? location.origin : "http://localhost:8000");
+BASE = BASE.replace(/\/$/, "");
+const WS_URL = BASE.replace(/^http/, "ws") + "/ws";
+const SEV = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
+const COLORS = { LOW:"#f1c40f", MEDIUM:"#f39c12", HIGH:"#e8622c", CRITICAL:"#e5383b" };
+
+// ---- state ----
+const state = { services:{}, deps:{}, incidents:{}, frames:[], selService:null, selIncident:null, detail:null, wsOpen:false };
+
+// ---- helpers ----
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+const pct = v => v == null ? "–" : (v * 100).toFixed(1) + "%";
+const ms = v => v == null ? "–" : Math.round(v) + " ms";
+const fmtT = t => t ? new Date(t * 1000).toLocaleTimeString() : "–";
+const fmtD = s => s == null ? "–" : s >= 60 ? Math.floor(s / 60) + "m " + Math.round(s % 60) + "s" : Math.round(s) + "s";
+async function api(path, opts) {
+  const r = await fetch(BASE + "/api" + path, opts);
+  if (!r.ok) throw new Error(path + " -> " + r.status);
+  return r.json();
+}
+
+// ---- service tiles ----
+function renderTiles() {
+  const names = Object.keys(state.services).sort();
+  if (!names.length) return;
+  $("tiles").innerHTML = names.map(n => {
+    const s = state.services[n];
+    const st = s.status || "healthy";
+    return `<div class="tile c-${esc(st)} ${n === state.selService ? "sel" : ""}" data-n="${esc(n)}">
+      <div class="n">${esc(n)}</div><div class="s">${esc(st.replace("_", " "))}</div>
+      <div class="m"><span>err <b>${pct(s.error_rate)}</b></span><span>p95 <b>${s.p95_latency == null ? "–" : Math.round(s.p95_latency)}</b></span><span>vol <b>${s.volume ?? "–"}</b></span></div>
+    </div>`;
+  }).join("");
+  $("tiles").querySelectorAll(".tile").forEach(el => el.onclick = () => selectService(el.dataset.n));
+}
+function selectService(n) { state.selService = n; $("selName").textContent = n; renderTiles(); updateChart(); }
+
+function mergeServices(obj) {
+  for (const [n, v] of Object.entries(obj)) state.services[n] = Object.assign(state.services[n] || {}, v);
+  if (!state.selService) { const k = Object.keys(state.services).sort()[0]; if (k) selectService(k); }
+}
+
+// ---- chart ----
+let chart;
+function initChart() {
+  chart = new Chart($("chart"), {
+    type: "line",
+    data: { labels: [], datasets: [
+      { label:"band low", data:[], borderWidth:0, pointRadius:0, fill:false, tension:.2 },
+      { label:"normal band", data:[], borderWidth:0, pointRadius:0, fill:"-1", backgroundColor:"rgba(77,163,255,.22)", tension:.2 },
+      { label:"error rate", data:[], borderColor:"#e5383b", borderWidth:2, pointRadius:0, fill:false, tension:.2 },
+    ]},
+    options: {
+      animation:false, maintainAspectRatio:false, responsive:true,
+      scales: {
+        x: { ticks:{ color:"#8a96ad", maxTicksLimit:8 }, grid:{ color:"#1c2438" } },
+        y: { beginAtZero:true, ticks:{ color:"#8a96ad", callback:v => v + "%" }, grid:{ color:"#1c2438" } },
+      },
+      plugins: { legend:{ labels:{ color:"#8a96ad", filter:i => i.text !== "band low" } } },
+    },
+  });
+}
+function updateChart() {
+  if (!chart) return;
+  const n = state.selService;
+  const labels = [], lo = [], hi = [], val = [];
+  for (const f of state.frames) {
+    const s = f.services && f.services[n];
+    if (!s) continue;
+    labels.push(fmtT(f.t));
+    val.push(+(s.error_rate * 100).toFixed(2));
+    if (s.band) { lo.push(+(s.band[0] * 100).toFixed(2)); hi.push(+(s.band[1] * 100).toFixed(2)); }
+    else { lo.push(null); hi.push(null); }
+  }
+  chart.data.labels = labels;
+  chart.data.datasets[0].data = lo;
+  chart.data.datasets[1].data = hi;
+  chart.data.datasets[2].data = val;
+  chart.update("none");
+}
+function pushFrame(f) {
+  state.frames.push(f);
+  if (state.frames.length > 300) state.frames.shift();
+  mergeServices(f.services || {});
+  renderTiles(); updateChart();
+}
+
+// ---- incidents ----
+const sevIdx = s => SEV.indexOf(s);
+function sortedIncidents() {
+  return Object.values(state.incidents).sort((a, b) => {
+    const ao = a.state === "OPEN" ? 0 : 1, bo = b.state === "OPEN" ? 0 : 1;
+    if (ao !== bo) return ao - bo;
+    if (sevIdx(b.current_severity) !== sevIdx(a.current_severity)) return sevIdx(b.current_severity) - sevIdx(a.current_severity);
+    if (!!b.has_new_pattern !== !!a.has_new_pattern) return b.has_new_pattern ? 1 : -1;
+    return (b.opened_at || 0) - (a.opened_at || 0);
+  });
+}
+function renderHealth() {
+  const open = Object.values(state.incidents).filter(i => i.state === "OPEN");
+  let worst = -1;
+  open.forEach(i => worst = Math.max(worst, sevIdx(i.current_severity)));
+  const el = $("health");
+  if (worst < 0) { el.textContent = "Healthy"; el.style.background = "#14351f"; el.style.borderColor = "var(--ok)"; }
+  else { const s = SEV[worst]; el.textContent = s + " — " + open.length + " open"; el.style.background = COLORS[s]; el.style.borderColor = COLORS[s]; el.style.color = s === "LOW" || s === "MEDIUM" ? "#222" : "#fff"; }
+  if (worst < 0) el.style.color = "var(--text)";
+}
+function renderFeed() {
+  const list = sortedIncidents();
+  renderHealth();
+  if (!list.length) { $("feed").innerHTML = '<span class="muted">No incidents.</span>'; return; }
+  $("feed").innerHTML = list.map(i => {
+    const resolved = i.state === "RESOLVED";
+    return `<div class="card c-${esc(i.current_severity)} ${resolved ? "resolved" : ""} ${i.id === state.selIncident ? "sel" : ""}" data-id="${esc(i.id)}">
+      <div class="t"><span class="badge b-${resolved ? "RESOLVED" : esc(i.current_severity)}">${resolved ? "RESOLVED" : esc(i.current_severity)}</span>${i.has_new_pattern ? '<span class="badge new">NEW</span>' : ""}${esc(i.title)}</div>
+      <div class="sub">origin: ${esc(i.origin || "–")} · affected: ${esc((i.affected_services || []).join(", "))} · max ${esc(i.max_severity)} · opened ${fmtT(i.opened_at)}${i.notified ? " · notified" : ""}</div>
+    </div>`;
+  }).join("");
+  $("feed").querySelectorAll(".card").forEach(el => el.onclick = () => selectIncident(el.dataset.id));
+}
+function upsertIncident(g) {
+  state.incidents[g.id] = Object.assign(state.incidents[g.id] || {}, g);
+  renderFeed();
+  if (g.id === state.selIncident) loadDetail(g.id);
+}
+async function selectIncident(id) { state.selIncident = id; renderFeed(); await loadDetail(id); }
+async function loadDetail(id) {
+  try { state.detail = await api("/incidents/" + encodeURIComponent(id)); renderDetail(); }
+  catch (e) { $("detail").innerHTML = '<span class="warn">' + esc(e.message) + "</span>"; }
+}
+function renderDetail() {
+  const d = state.detail;
+  if (!d) return;
+  const badge = d.state === "RESOLVED" ? '<span class="badge b-RESOLVED">RESOLVED</span>' : `<span class="badge b-${esc(d.current_severity)}">${esc(d.current_severity)}</span>`;
+  const ex = d.explanation || {};
+  const label = ex.label || (ex.source === "llm" ? "AI-generated — verify" : "Rule-based");
+  const pats = (d.patterns || []).map(p => `<tr><td>${p.is_new ? '<span class="badge new">NEW</span>' : ""}<code>${esc(p.template)}</code><div class="muted">${esc(p.service)}</div></td>
+      <td>${p.count}</td><td>${p.expected_per_min == null ? "–" : (+p.expected_per_min).toFixed(1)}</td><td>${p.surge_ratio == null ? "–" : (+p.surge_ratio).toFixed(1) + "×"}</td></tr>`).join("");
+  const story = (d.story || []).map(e => `<li><span class="ts">${fmtT(e.t)}</span><b>${esc(e.service)}</b> ${esc(e.event)}${e.severity ? " → " + esc(e.severity) : ""} <span class="muted">${esc(e.detail || "")}</span></li>`).join("");
+  const nodes = ((d.blast_radius && d.blast_radius.nodes) || []).map(n =>
+    `<span class="chip ${esc(n.status)} ${n.service === (d.blast_radius.origin) ? "origin" : ""}">${esc(n.service)} · ${esc(n.status.replace("_", " "))}</span>`).join("");
+  const members = (d.incidents || []).map(m => `<tr><td>${esc(m.service)}</td><td>${esc(m.state)}</td><td>${esc(m.current_severity)}</td><td>${esc(m.what)}</td></tr>`).join("");
+  const list = a => (a || []).map(x => `<li>${esc(x)}</li>`).join("");
+  const wi = d.what_if ? `<h3>What-if</h3><pre>${esc(JSON.stringify(d.what_if, null, 2))}</pre><div class="muted">Projection if the trend continues — not a prediction.</div>` : "";
+  $("detail").innerHTML = `
+    <div style="font-size:16px;font-weight:600;margin-bottom:8px">${badge}${d.has_new_pattern ? '<span class="badge new">NEW</span>' : ""}${esc(d.title)}</div>
+    <div class="kv">
+      <div>What</div><div>${esc(d.what)}</div>
+      <div>How bad</div><div>peak z ${d.peak_z == null ? "–" : (+d.peak_z).toFixed(1)} · duration ${fmtD(d.duration_s)} · failed ops ${d.failed_ops ?? "–"} · max ${esc(d.max_severity)}</div>
+      <div>Affected</div><div>${esc((d.affected_services || []).join(", "))} <span class="muted">(origin: ${esc(d.origin || "–")})</span></div>
+    </div>
+    <h3>Blast radius</h3><div>${nodes || '<span class="muted">–</span>'}</div>
+    <h3>Timeline</h3><ul class="tl">${story || '<li class="muted">–</li>'}</ul>
+    <h3>Probable cause (top patterns)</h3>
+    ${pats ? `<table><tr><th>Pattern</th><th>Count</th><th>Normal/min</th><th>Surge</th></tr>${pats}</table>` : '<span class="muted">–</span>'}
+    <h3>Hint</h3><div class="hint"><b>Probable cause:</b> ${esc(d.hint || "–")}</div>
+    <h3>Samples (redacted)</h3>${(d.samples || []).map(s => `<pre>${esc(s)}</pre>`).join("") || '<span class="muted">–</span>'}
+    <h3>Explanation <span class="badge ${ex.source === "llm" ? "new" : ""}" style="${ex.source === "llm" ? "" : "background:var(--warm)"}">${esc(label)}</span></h3>
+    <div>${esc(ex.summary || "–")}</div>
+    ${ex.probable_cause ? `<div style="margin-top:4px"><b>Probable cause:</b> ${esc(ex.probable_cause)}</div>` : ""}
+    ${(ex.recommended_checks || []).length ? `<div style="margin-top:4px"><b>Recommended checks:</b><ul>${list(ex.recommended_checks)}</ul></div>` : ""}
+    ${ex.confidence ? `<div class="muted">confidence: ${esc(ex.confidence)}</div>` : ""}
+    <h3>Member incidents</h3>
+    <table><tr><th>Service</th><th>State</th><th>Severity</th><th>What</th></tr>${members}</table>
+    ${wi}`;
+}
+
+// ---- stats / health ----
+async function loadStats() {
+  try {
+    const s = await api("/stats");
+    $("stNaive").textContent = s.naive_alerts;
+    $("stInc").textContent = s.sentinel_incidents;
+    $("stNotif").textContent = s.sentinel_notifications;
+    $("phi").textContent = "PHI redacted: " + (s.phi_redacted ?? 0);
+    const lat = Object.entries(s.detection_latency_s || {}).map(([k, v]) => `${esc(k)}: ${(+v).toFixed(1)}s`).join(" · ");
+    $("stLat").innerHTML = lat ? "Detection latency — " + lat : "Detection latency — run a scenario";
+  } catch (e) {}
+}
+async function loadHealth() {
+  try { const h = await api("/health"); $("aws").textContent = "AWS: " + h.aws; $("llm").textContent = "LLM: " + h.llm; } catch (e) {}
+}
+
+// ---- data loading / polling ----
+async function loadServices() {
+  try {
+    const arr = await api("/services");
+    const obj = {};
+    arr.forEach(s => { obj[s.name] = s; });
+    mergeServices(obj);
+    renderTiles();
+  } catch (e) {}
+}
+async function loadIncidents() {
+  try {
+    const arr = await api("/incidents?status=all");
+    state.incidents = {};
+    arr.forEach(g => state.incidents[g.id] = g);
+    renderFeed();
+    if (state.selIncident && state.incidents[state.selIncident]) loadDetail(state.selIncident);
+  } catch (e) {}
+}
+async function pollTick() {
+  if (state.wsOpen) return;
+  await loadServices(); await loadIncidents();
+  // synthesize a frame from polled services so the chart still moves
+  const svc = {};
+  for (const [n, s] of Object.entries(state.services)) svc[n] = { volume:s.volume, error_rate:s.error_rate, p95_latency:s.p95_latency, status:s.status,
+    band: s.baseline && s.baseline.error_rate_band ? s.baseline.error_rate_band : null };
+  pushFrame({ t: Date.now() / 1000, services: svc });
+}
+
+// ---- websocket ----
+let backoff = 1000;
+function setConn(mode) {
+  $("dot").className = "dot " + (mode === "ws" ? "live" : mode === "poll" ? "poll" : "");
+  $("connText").textContent = mode === "ws" ? "live (WebSocket)" : mode === "poll" ? "polling (2s)" : "disconnected";
+}
+function connectWS() {
+  let ws;
+  try { ws = new WebSocket(WS_URL); } catch (e) { setConn("poll"); setTimeout(connectWS, backoff); return; }
+  ws.onopen = () => { state.wsOpen = true; backoff = 1000; setConn("ws"); loadIncidents(); };
+  ws.onmessage = ev => {
+    let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+    if (m.type === "metrics") pushFrame(m.data);
+    else if (m.type === "incident_opened" || m.type === "incident_updated" || m.type === "incident_resolved") upsertIncident(m.data);
+    else if (m.type === "notification") loadStats();
+  };
+  ws.onclose = () => { state.wsOpen = false; setConn("poll"); backoff = Math.min(backoff * 2, 10000); setTimeout(connectWS, backoff); };
+  ws.onerror = () => { try { ws.close(); } catch (e) {} };
+}
+
+// ---- controls ----
+document.querySelectorAll("#sim button").forEach(b => b.onclick = async () => {
+  const name = b.dataset.s;
+  $("simmsg").textContent = "Starting " + name + "…";
+  try { await api("/simulate/" + name, { method:"POST" }); $("simmsg").textContent = "Started: " + name + " at " + new Date().toLocaleTimeString(); }
+  catch (e) { $("simmsg").textContent = "Failed: " + e.message; }
+});
+$("sens").oninput = () => { $("sensVal").textContent = $("sens").value; };
+$("sens").onchange = async () => {
+  try { await api("/config/sensitivity", { method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify({ open_z: +$("sens").value }) }); }
+  catch (e) { $("simmsg").textContent = "Sensitivity failed: " + e.message; }
+};
+
+// Optional: prefill the chart. If the endpoint is absent or fails, the chart starts empty and fills from live data.
+// The browser logs any failed request itself, so when FastAPI's /openapi.json says the route doesn't exist, skip the call.
+async function loadHistory() {
+  try {
+    let exists = true;
+    try {
+      const r = await fetch(BASE + "/openapi.json");
+      if (r.ok) exists = Object.keys((await r.json()).paths || {}).some(p => p.endsWith("/metrics/history"));
+    } catch (e) { /* no openapi: just try the endpoint */ }
+    if (!exists) return;
+    const h = await api("/metrics/history?seconds=300");
+    if (!Array.isArray(h)) return;
+    h.forEach(f => { if (f && typeof f.t === "number" && f.services) state.frames.push(f); });
+    state.frames = state.frames.slice(-300);
+    updateChart();
+  } catch (e) { /* history is optional */ }
+}
+
+// ---- boot ----
+(async function init() {
+  initChart();
+  setConn("poll");
+  await loadServices();
+  await loadHistory();
+  await loadIncidents();
+  loadStats(); loadHealth();
+  connectWS();
+  setInterval(pollTick, 2000);
+  setInterval(loadStats, 3000);
+  setInterval(loadHealth, 15000);
+  setInterval(() => { if (state.wsOpen) loadServices(); }, 5000); // refresh service status/baseline metadata
+  setInterval(() => { if (state.selIncident && state.incidents[state.selIncident] && state.incidents[state.selIncident].state === "OPEN") loadDetail(state.selIncident); }, 3000);
+})();
+</script>
+</body>
+</html>
