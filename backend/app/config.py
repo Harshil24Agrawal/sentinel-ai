@@ -84,6 +84,7 @@ class Settings(BaseSettings):
 
     # Built-in synthetic traffic
     GENERATOR_ENABLED: bool = True
+    GENERATOR_SEED: int | None = None  # set for reproducible demo traffic
 
 
 @lru_cache

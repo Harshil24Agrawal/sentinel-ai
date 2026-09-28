@@ -49,6 +49,9 @@ class LogEvent(BaseModel):
     latency_ms: int | None = None
     message: str  # redacted
     raw: str  # redacted
+    parsed: bool = True  # False: line matched no known format (service is "unknown")
+    pattern_id: str | None = None  # set for error/warn lines only
+    template: str | None = None
 
 
 class Signal(BaseModel):
