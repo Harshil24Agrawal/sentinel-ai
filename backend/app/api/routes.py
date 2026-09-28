@@ -3,6 +3,7 @@ the same thread as the pipeline tick, so they never see a half-updated incident.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -66,6 +67,12 @@ async def simulate(request: Request, scenario: str) -> dict[str, Any]:
     except SimulationDisabledError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
     return {"ok": True, "scenario": scenario, "started_at": started}
+
+
+@router.post("/aws/test")
+async def aws_test(request: Request) -> dict[str, Any]:
+    """Send one clearly-labeled test message to CloudWatch and SNS; report each result."""
+    return await asyncio.to_thread(pipeline_of(request).notifier.send_test)
 
 
 @router.post("/config/sensitivity")

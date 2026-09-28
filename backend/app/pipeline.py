@@ -24,12 +24,14 @@ from app.explainer.base import Explainer
 from app.incidents import IncidentManager
 from app.logfeed import LogFeed
 from app.models import (
+    Incident,
     IncidentEvent,
     IncidentState,
     NotifyRequest,
     ServiceBandView,
     ServiceHealth,
     ServiceStatus,
+    SignalType,
     Stats,
 )
 from app.naive import NaiveDetector
@@ -309,6 +311,7 @@ class Pipeline:
             "status": "ok",
             "uptime_s": round(self.clock.now() - self.started_at, 1),
             "aws": self.notifier.mode,
+            "aws_checks": self.notifier.aws_checks,
             "llm": self.settings.LLM_PROVIDER,
         }
 
@@ -319,6 +322,7 @@ class Pipeline:
             sentinel_notifications=self.manager.notifications_emitted,
             detection_latency_s=self._detection_latency(),
             phi_redacted=self.redactor.total,
+            delivery_log=list(self.notifier.delivery_log),
         )
 
     def _detection_latency(self) -> dict[str, float]:
@@ -384,20 +388,36 @@ class Pipeline:
                     messages.append(self._notification_message(event.notify, group_id))
         return messages
 
+    @staticmethod
+    def _peak_signal(incident: Incident) -> tuple[float | None, float | None, float | None]:
+        """(value, baseline_median, z) of the incident's error-rate signal, or else its most
+        anomalous signal — the numbers a CloudWatch Logs Insights query would chart."""
+        if not incident.signals:
+            return None, None, None
+        sig = next((s for s in incident.signals if s.type is SignalType.ERROR_RATE), None)
+        sig = sig or max(incident.signals, key=lambda s: s.z)
+        return sig.value, sig.baseline_median, sig.z
+
     def _queue_state_change(self, kind: str, event: IncidentEvent, summary: Any) -> None:
-        """Every incident state change goes to the notifier (CloudWatch + the dry-run file)."""
+        """Every incident state change goes to the notifier (CloudWatch + the dry-run file).
+        Field names are a small, stable contract for CloudWatch Logs Insights queries: event,
+        incident_id, group_id, service, severity, origin, error_rate, baseline, z, timestamp."""
+        error_rate, baseline, z = self._peak_signal(event.incident)
         self.notifier.submit(
             {
-                "ts": self.clock.now(),
-                "channel": "cloudwatch",
-                "type": kind,
+                "event": kind,
                 "transition": event.transition,
-                "group_id": summary.id,
                 "incident_id": event.incident.id,
+                "group_id": summary.id,
                 "service": event.incident.service,
-                "state": event.incident.state.value,
                 "severity": event.incident.current_severity.name,
                 "origin": summary.origin,
+                "error_rate": error_rate,
+                "baseline": baseline,
+                "z": z,
+                "timestamp": self.clock.now(),
+                "channel": "cloudwatch",
+                "state": event.incident.state.value,
                 "title": summary.title,
             }
         )
@@ -418,13 +438,18 @@ class Pipeline:
         )
         self.notifier.submit(
             {
-                "ts": self.clock.now(),
-                "channel": "sns",
-                "type": "notification",
+                "event": "notification",
                 "kind": request.kind,
-                "group_id": group_id,
                 "incident_id": request.incident_id,
+                "group_id": group_id,
+                "service": request.payload.get("origin"),
                 "severity": request.severity.name,
+                "origin": request.payload.get("origin"),
+                "error_rate": None,
+                "baseline": None,
+                "z": None,
+                "timestamp": self.clock.now(),
+                "channel": "sns",
                 "subject": request.subject,
                 "body": request.body,
                 "payload": request.payload,

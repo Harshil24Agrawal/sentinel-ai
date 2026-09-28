@@ -368,10 +368,10 @@ def test_notification_carries_a_compact_redacted_card() -> None:
     h = Harness()
     h.run(5, {"a": Z_HIGH})
     (note,) = h.notifies()
-    assert note.subject.startswith("[SentinelAI] HIGH: a")
+    assert note.subject.startswith("[HIGH] SentinelAI: a outage")
     assert len(note.subject) <= 100  # SNS subject limit
-    assert "What: error rate 30.0% vs normal 2.0%" in note.body
-    assert "Probable cause (hint):" in note.body
+    assert "WHAT: error rate 30.0% vs normal 2.0%" in note.body
+    assert "HINT:" in note.body
     assert note.payload["origin"] == "a" and note.payload["severity"] == "HIGH"
     assert note.incident_id == h.incident("a").id
 

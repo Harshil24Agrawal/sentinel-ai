@@ -37,8 +37,11 @@ class Sim:
 
     def __init__(self, tmp_path: Path) -> None:
         self.log = tmp_path / "app.log"
+        self.dryrun_path = tmp_path / "notifications_dryrun.jsonl"
         self.clock = FakeClock(START)
-        settings = make_settings(LOG_PATH=str(self.log), DB_PATH=":memory:")
+        settings = make_settings(
+            LOG_PATH=str(self.log), DB_PATH=":memory:", DRYRUN_PATH=str(self.dryrun_path)
+        )
         self.generator = LogGenerator(self.clock, self.log, seed=7)
         self.pipeline = Pipeline(
             self.clock,
@@ -173,10 +176,25 @@ def test_phi_never_leaves_the_process(sim: SimpleNamespace) -> None:
     groups = client.get("/api/incidents").json()
     cards = [client.get(f"/api/incidents/{g['id']}").json() for g in groups]
     stored = store.list_incidents()
+
+    # Drain and deliver whatever the notifier queued (CloudWatch state-change events and SNS
+    # notification payloads, incl. the readable email body) to the local dry-run file, exactly
+    # as the background worker would -- so the file on disk is scanned, not just the in-memory
+    # `pipeline.notifications` view the dashboard reads.
+    queued = []
+    while not pipeline.notifier.queue.empty():
+        queued.append(pipeline.notifier.queue.get_nowait())
+    if queued:
+        pipeline.notifier.deliver(queued)
+    assert sim.s.dryrun_path.exists()
+    dryrun_text = sim.s.dryrun_path.read_text(encoding="utf-8")
+    assert '"event": "incident_opened"' in dryrun_text  # the scan below means something
+
     outputs = {
         "incident list": json.dumps(groups),
         "incident cards": json.dumps(cards),
         "notifications": json.dumps(pipeline.notifications),
+        "notifier dry-run file (CloudWatch events + SNS bodies)": dryrun_text,
         "metrics history": json.dumps(client.get("/api/metrics/history").json()),
         "services": json.dumps(client.get("/api/services").json()),
         "stats": json.dumps(client.get("/api/stats").json()),

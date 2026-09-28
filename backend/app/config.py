@@ -92,9 +92,11 @@ class Settings(BaseSettings):
     # Notifier
     AWS_ENABLED: bool = False
     AWS_REGION: str = "us-east-1"
+    AWS_PROFILE: str = ""  # named AWS CLI/SDK profile; empty uses the default credential chain
     CW_LOG_GROUP: str = "/sentinel-ai/incidents"
     CW_LOG_STREAM: str = "demo"
     SNS_TOPIC_ARN: str = ""
+    DASHBOARD_URL: str = "http://localhost:8000"  # linked from SNS notification bodies
 
     # Optional LLM explainer
     LLM_PROVIDER: Literal["none", "anthropic", "openai", "azure_openai", "bedrock"] = "none"

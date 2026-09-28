@@ -13,8 +13,9 @@ class CloudWatchSink:
         self._stream = stream
         self._ready = False
 
-    def _ensure(self) -> None:
-        """Create the log group and stream if missing (an existing one is fine)."""
+    def ensure(self) -> None:
+        """Create the log group and stream if missing (an existing one is fine). Public so the
+        notifier's startup self-check can run it once, eagerly, and report the result."""
         if self._ready:
             return
         for create, kwargs in (
@@ -33,9 +34,12 @@ class CloudWatchSink:
 
     def put(self, records: list[dict[str, Any]]) -> None:
         """Send one batch; ``records`` are already redacted."""
-        self._ensure()
+        self.ensure()
         events = [
-            {"timestamp": int(float(r.get("ts", 0)) * 1000), "message": json.dumps(r, default=str)}
+            {
+                "timestamp": int(float(r.get("timestamp", 0)) * 1000),
+                "message": json.dumps(r, default=str),
+            }
             for r in records
         ]
         events.sort(key=lambda e: e["timestamp"])  # CloudWatch requires chronological order

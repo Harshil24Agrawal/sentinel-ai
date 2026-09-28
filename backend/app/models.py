@@ -302,9 +302,20 @@ class ServiceStatus(BaseModel):
     depends_on: list[str] = Field(default_factory=list)
 
 
+class DeliveryLogEntry(BaseModel):
+    """One outgoing send, for the dashboard's delivery log (last 10)."""
+
+    ts: float
+    channel: Channel
+    severity: str | None = None
+    ok: bool
+    latency_ms: float
+
+
 class Stats(BaseModel):
     naive_alerts: int = 0
     sentinel_incidents: int = 0
     sentinel_notifications: int = 0
     detection_latency_s: dict[str, float] = Field(default_factory=dict)
     phi_redacted: int = 0
+    delivery_log: list[DeliveryLogEntry] = Field(default_factory=list)

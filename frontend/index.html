@@ -20,6 +20,7 @@
   header .tag { font-size:11px; color:#8fa5c6; }
   header .grow { flex:1; }
   .meta { font-size:12px; color:#c9d6ea; } .meta b { color:#fff; }
+  .meta b.aws-live { color:#3ddc84; } .meta b.aws-dryrun { color:#f0c040; } .meta b.aws-error { color:#ff6b6b; cursor:help; }
   .live { display:inline-flex; align-items:center; gap:6px; font-weight:700; font-size:12px; padding:3px 10px; border-radius:999px; border:1px solid rgba(255,255,255,.3); }
   .dot { width:9px; height:9px; border-radius:50%; background:var(--crit); }
   .live.ws .dot { background:#3ddc84; animation:pulse 1.4s infinite; } .live.poll .dot { background:var(--low); }
@@ -73,6 +74,8 @@
   .ks { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
   .ks div { text-align:center; } .ks b { display:block; font-size:28px; line-height:1.1; } .ks span { font-size:11px; text-transform:uppercase; color:var(--muted); letter-spacing:.6px; }
   .sens { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--muted); }
+  .dlog h4 { margin:0 0 6px; font-size:11px; text-transform:uppercase; letter-spacing:.8px; color:var(--muted); }
+  .dlog table { font-size:12px; } .dlog td.ok { color:var(--ok); font-weight:600; } .dlog td.fail { color:var(--crit); font-weight:600; }
   footer.pipe { display:flex; flex-wrap:wrap; align-items:center; gap:6px; justify-content:center; font-size:12px; }
   footer.pipe span.st { background:var(--bg); border:1px solid var(--line); padding:4px 10px; border-radius:999px; font-weight:600; } footer.pipe i { color:var(--muted); font-style:normal; }
   /* drawer */
@@ -94,6 +97,24 @@
   .chip { display:inline-block; padding:1px 8px; margin:2px 4px 2px 0; border-radius:999px; font-size:12px; border:1px solid var(--line); background:var(--bg); }
   .chip.impacted { border-color:var(--crit); color:var(--crit); } .chip.at_risk { border-color:var(--med); color:var(--med); }
   table { width:100%; border-collapse:collapse; font-size:12px; } th,td { text-align:left; padding:5px 6px; border-bottom:1px solid var(--line); vertical-align:top; } th { color:var(--muted); font-size:11px; text-transform:uppercase; }
+  /* live logs (terminal) */
+  .logs { background:#0d1117; border:1px solid #21262d; border-radius:10px; overflow:hidden; scroll-margin-top:12px; }
+  .logs .lh { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:8px 12px; background:#161b22; color:#c9d1d9; font-size:12px; }
+  .logs .lh b.ttl { text-transform:uppercase; letter-spacing:.8px; color:#8b949e; margin-right:4px; }
+  .logs select, .logs input, .logs button { background:#0d1117; color:#c9d1d9; border:1px solid #30363d; border-radius:6px; padding:3px 8px; font:inherit; font-size:12px; }
+  .logs button { cursor:pointer; } .logs button:hover { border-color:#58a6ff; }
+  .logs .chipf { background:rgba(240,180,0,.15); border:1px solid #9a7400; color:#f0c040; border-radius:999px; padding:1px 4px 1px 10px; display:none; }
+  .logs .chipf button { border:0; background:none; color:#f0c040; padding:0 6px; }
+  .logs .sp { flex:1; }
+  #logHidden { color:#8b949e; }
+  #logbox { position:relative; height:320px; overflow:auto; font:12px/1.5 ui-monospace,Consolas,monospace; color:#c9d1d9; padding:6px 0; }
+  .ll { display:flex; gap:8px; padding:0 12px; white-space:pre-wrap; word-break:break-word; } .ll:hover { background:#161b22; }
+  .ll.hl { background:rgba(240,180,0,.14); border-left:3px solid #f0b400; padding-left:9px; }
+  .lt { color:#6e7681; flex:none; } .ls { color:#79c0ff; flex:none; } .lm { flex:1; min-width:0; }
+  .lv { flex:none; min-width:58px; text-align:center; border-radius:3px; font-weight:700; font-size:11px; color:#fff; padding:0 4px; align-self:flex-start; margin-top:2px; line-height:16px; }
+  .lv-DEBUG { background:#484f58; } .lv-INFO { background:#1f6feb; } .lv-WARN { background:#d29922; color:#111; } .lv-ERROR { background:#da3633; } .lv-CRITICAL { background:#8e1519; outline:1px solid #ff7b72; }
+  .lnew { background:#2f6fed; color:#fff; border-radius:3px; font-size:10px; font-weight:700; padding:0 5px; align-self:flex-start; margin-top:2px; line-height:16px; }
+  #viewLogs { margin-left:8px; background:#0d1117; color:#c9d1d9; border:1px solid #30363d; border-radius:6px; padding:3px 10px; cursor:pointer; font:inherit; font-size:12px; font-weight:600; vertical-align:middle; }
   /* toasts */
   #toasts { position:fixed; top:64px; right:16px; z-index:50; display:flex; flex-direction:column; gap:8px; width:min(360px,calc(100vw - 32px)); }
   .toast { background:#fff; border:1px solid var(--line); border-left:6px solid var(--warm); border-radius:8px; box-shadow:0 8px 24px rgba(20,30,50,.25); padding:10px 12px; }
@@ -151,6 +172,22 @@
     </section>
   </div>
 
+  <section class="logs" id="logs">
+    <div class="lh">
+      <b class="ttl">Live logs</b>
+      <select id="logSvc" aria-label="Filter by service"><option value="">All services</option></select>
+      <select id="logLvl" aria-label="Filter by level"><option value="">All levels</option><option>DEBUG</option><option>INFO</option><option>WARN</option><option>ERROR</option><option>CRITICAL</option></select>
+      <input id="logQ" type="search" placeholder="Search…" aria-label="Search logs">
+      <button id="logPause">Pause</button>
+      <button id="logJump" style="display:none">Jump to latest</button>
+      <span class="chipf" id="logChip"><span id="logChipTxt"></span><button id="logChipX" aria-label="Clear incident filter">×</button></span>
+      <span class="sp"></span>
+      <span id="logHidden"></span>
+      <span id="logCount" class="muted"></span>
+    </div>
+    <div id="logbox"></div>
+  </section>
+
   <details class="dq" id="dq">
     <summary>Detection quality</summary>
     <div class="dqbody">
@@ -162,6 +199,11 @@
         <div><b id="stLat" style="font-size:16px;line-height:1.6">–</b><span>Detection latency</span></div>
       </div>
       <div class="sens">Sensitivity (open z): <input type="range" id="sens" min="2" max="5" step="0.5" value="3"> <b id="sensVal">–</b> <span>lower = more sensitive (shows a value once you set it)</span></div>
+      <div class="dlog">
+        <h4>Delivery log <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">(last 10 sends)</span></h4>
+        <table><thead><tr><th>Time</th><th>Channel</th><th>Severity</th><th>Status</th><th>Latency</th></tr></thead>
+        <tbody id="dlogBody"><tr><td colspan="5" class="muted">No sends yet.</td></tr></tbody></table>
+      </div>
       <footer class="pipe">
         <span class="st">Collector</span><i>→</i><span class="st">Redact PHI</span><i>→</i><span class="st">Patterns</span><i>→</i><span class="st">Sliding Window</span><i>→</i>
         <span class="st">Robust Baseline</span><i>→</i><span class="st">Detectors</span><i>→</i><span class="st">Incidents</span><i>→</i><span class="st">Notify</span>
@@ -413,7 +455,7 @@ function renderDetail() {
   const story = (d.story || []).map(e => `<li><span class="ts">${fmtT(e.t)}</span><b>${esc(e.service)}</b> ${esc(e.event)}${e.severity ? " → " + esc(e.severity) : ""} <span class="muted">${esc(e.detail || "")}</span></li>`).join("");
   const list = a => (a || []).map(x => `<li>${esc(x)}</li>`).join("");
   $("detail").innerHTML = `
-    <div style="font-size:16px;font-weight:600;margin-bottom:10px"><span class="badge b-${resolved ? "RESOLVED" : esc(d.current_severity)}">${resolved ? "RESOLVED" : esc(d.current_severity)}</span>${d.has_new_pattern ? '<span class="badge b-NEW">NEW</span>' : ""}${esc(d.title)}</div>
+    <div style="font-size:16px;font-weight:600;margin-bottom:10px"><span class="badge b-${resolved ? "RESOLVED" : esc(d.current_severity)}">${resolved ? "RESOLVED" : esc(d.current_severity)}</span>${d.has_new_pattern ? '<span class="badge b-NEW">NEW</span>' : ""}${esc(d.title)} <button id="viewLogs">View logs</button></div>
     <div class="grid4">
       <div class="box"><h4>DETECTED</h4>${esc(d.what)}<div class="muted">first flagged ${fmtT(d.opened_at)} · ${resolved ? "lasted" : "open for"} ${fmtD(d.duration_s)} · ${d.failed_ops ?? "–"} failed ops</div></div>
       <div class="box"><h4>DEVIATION</h4>${d.peak_z == null ? "–" : "z = " + (+d.peak_z).toFixed(1)}${r ? `<br>${r.ratio.toFixed(1)}× baseline` : ""}<div class="muted">${r ? esc(r.sig.detail || "") : ""}</div></div>
@@ -433,6 +475,120 @@ function renderDetail() {
     <h3>Member incidents</h3>
     <table><tr><th>Service</th><th>State</th><th>Severity</th><th>What</th></tr>${(d.incidents || []).map(m => `<tr><td>${esc(m.service)}</td><td>${esc(m.state)}</td><td>${esc(m.current_severity)}</td><td>${esc(m.what)}</td></tr>`).join("")}</table>
     ${d.what_if ? `<h3>What-if</h3><pre>${esc(JSON.stringify(d.what_if, null, 2))}</pre><div class="muted">Projection if the trend continues — not a prediction.</div>` : ""}`;
+  $("viewLogs").onclick = () => viewLogsFor(d);
+}
+
+// ---- live logs ----
+// Backend contract assumed (not in CLAUDE.md §7): GET /api/logs/recent?limit=N and WS {type:"log", data}, where the payload is
+// a line, an array of lines, or {lines:[...], sampled_hidden:N}. A line is {id?, t (epoch s), level, service, message, pattern_id?, is_new?}.
+// sampled_hidden is the cumulative count of INFO lines the backend sampled out.
+const LOG_MAX = 500;
+const logs = { lines:[], pending:[], pendingCount:0, seen:new Set(), recentKeys:new Set(), recentPayload:null, capped:0, paused:false, follow:true, hidden:null, available:null, svcNames:new Set(), svcKey:"", incident:null, timer:null, k:0 };
+function normLevel(l) { l = String(l || "").toUpperCase(); return l === "WARNING" ? "WARN" : l === "FATAL" ? "CRITICAL" : (l || "INFO"); }
+function normLine(o) {
+  if (!o || typeof o !== "object") return null;
+  let t = o.t ?? o.ts ?? o.timestamp;
+  if (typeof t === "string") { const p = Date.parse(t); t = isNaN(p) ? null : p / 1000; }
+  return { k: ++logs.k, id: o.id ?? o.seq ?? null, t: typeof t === "number" ? t : null, level: normLevel(o.level), service: o.service || "unknown",
+    message: o.message ?? o.msg ?? o.raw ?? "", pattern_id: o.pattern_id ?? null, is_new: !!o.is_new };
+}
+function fmtLogT(t) {
+  if (t == null) return "––:––:––.–––";
+  const d = new Date(t * 1000);
+  return d.toLocaleTimeString([], { hour12:false }) + "." + String(d.getMilliseconds()).padStart(3, "0");
+}
+function trimLines(arr) {
+  if (arr.length <= LOG_MAX) return;
+  arr.splice(0, arr.length - LOG_MAX).forEach(l => { if (l.id != null) logs.seen.delete(l.id); });
+}
+function ingestLogs(payload) {
+  // /logs/recent returns [LogLine]; the WS "logs" message is {lines, sampled_out (this tick), capped (this tick)} -> accumulate
+  let list = [];
+  if (Array.isArray(payload)) list = payload;
+  else if (payload && Array.isArray(payload.lines)) {
+    list = payload.lines;
+    if (typeof payload.sampled_out === "number") logs.hidden = (logs.hidden || 0) + payload.sampled_out;
+    if (typeof payload.capped === "number") logs.capped += payload.capped;
+  }
+  const fresh = [];
+  for (const raw of list) {
+    const l = normLine(raw);
+    if (!l) continue;
+    const key = `${l.t}|${l.service}|${l.level}|${l.message}`;
+    if (payload === logs.recentPayload) logs.recentKeys.add(key);          // remember the backfill...
+    else if (logs.recentKeys.delete(key)) continue;                        // ...so a line also delivered by the WebSocket is shown once
+    logs.svcNames.add(l.service);
+    fresh.push(l);
+  }
+  if (!fresh.length && !(payload && payload.sampled_out)) return;
+  if (logs.paused) { logs.pending.push(...fresh); logs.pendingCount += fresh.length; trimLines(logs.pending); }
+  else { logs.lines.push(...fresh); trimLines(logs.lines); }
+  scheduleLogRender();
+}
+function scheduleLogRender() { if (!logs.timer) logs.timer = setTimeout(() => { logs.timer = null; renderLogs(); }, 200); }
+function logVisible(l) {
+  const svc = $("logSvc").value, lvl = $("logLvl").value, q = $("logQ").value.trim().toLowerCase();
+  if (svc && l.service !== svc) return false;
+  if (lvl && l.level !== lvl) return false;
+  if (logs.incident && !logs.incident.services.has(l.service)) return false;
+  if (q && !(l.message + " " + l.service + " " + l.level).toLowerCase().includes(q)) return false;
+  return true;
+}
+function renderLogs() {
+  const box = $("logbox"), inc = logs.incident;
+  // keep the service dropdown in sync with the services we know about
+  const names = [...new Set([...Object.keys(state.services), ...logs.svcNames])].sort();
+  if (names.join("|") !== logs.svcKey) {
+    const cur = $("logSvc").value;
+    $("logSvc").innerHTML = '<option value="">All services</option>' + names.map(n => `<option>${esc(n)}</option>`).join("");
+    $("logSvc").value = names.includes(cur) ? cur : "";
+    logs.svcKey = names.join("|");
+  }
+  // remember what the user was looking at so new lines don't shove it around while they read
+  let anchor = null;
+  if (!logs.follow) for (const r of box.children) if (r.offsetTop >= box.scrollTop) { anchor = { k: r.dataset.k, off: r.offsetTop - box.scrollTop }; break; }
+  const vis = logs.lines.filter(logVisible);
+  if (vis.length) {
+    box.innerHTML = vis.map(l => {
+      const hl = !!(inc && l.pattern_id && inc.patterns.has(l.pattern_id));
+      const isNew = l.is_new || (hl && inc.patterns.get(l.pattern_id).is_new);
+      return `<div class="ll${hl ? " hl" : ""}" data-k="${l.k}"><span class="lt">${fmtLogT(l.t)}</span><span class="lv lv-${esc(l.level)}">${esc(l.level)}</span><span class="ls">${esc(l.service)}</span><span class="lm">${esc(l.message)}</span>${isNew ? '<span class="lnew">NEW</span>' : ""}</div>`;
+    }).join("");
+  } else {
+    box.innerHTML = `<div class="ll muted">${logs.lines.length ? "No lines match the current filters." : logs.available === false ? "The backend does not provide a log stream (no /api/logs/recent)." : "Waiting for log lines…"}</div>`;
+  }
+  if (logs.follow) box.scrollTop = box.scrollHeight;
+  else if (anchor) { const el = box.querySelector(`[data-k="${anchor.k}"]`); if (el) box.scrollTop = el.offsetTop - anchor.off; }
+  $("logJump").style.display = logs.follow ? "none" : "inline-block";
+  $("logPause").textContent = logs.paused ? `Resume — ${logs.pendingCount} new line${logs.pendingCount === 1 ? "" : "s"}` : "Pause";
+  $("logCount").textContent = `${vis.length} of ${logs.lines.length} lines`;
+  $("logHidden").textContent = logs.hidden == null ? "" : `INFO sampled: ${logs.hidden.toLocaleString()} lines hidden` + (logs.capped ? ` · ${logs.capped} ERROR/WARN capped` : "");
+  $("logChip").style.display = inc ? "inline-block" : "none";
+  if (inc) $("logChipTxt").textContent = `Incident: ${[...inc.services].join(", ")}${inc.patterns.size ? ` · highlighting ${inc.patterns.size} pattern${inc.patterns.size === 1 ? "" : "s"}` : ""}`;
+}
+function viewLogsFor(d) {
+  const patterns = new Map((d.patterns || []).filter(p => p.pattern_id).map(p => [p.pattern_id, { is_new: !!p.is_new }]));
+  logs.incident = { services: new Set(d.affected_services || []), patterns };
+  $("logSvc").value = ""; $("logLvl").value = ""; $("logQ").value = "";
+  logs.follow = true;
+  closeDrawer(); renderLogs();
+  $("logs").scrollIntoView({ behavior:"smooth" });
+}
+$("logChipX").onclick = () => { logs.incident = null; renderLogs(); };
+["logSvc", "logLvl"].forEach(id => $(id).onchange = renderLogs);
+$("logQ").oninput = renderLogs;
+$("logPause").onclick = () => {
+  if (logs.paused) { logs.lines.push(...logs.pending); trimLines(logs.lines); logs.pending = []; logs.pendingCount = 0; logs.paused = false; }
+  else logs.paused = true;
+  renderLogs();
+};
+$("logbox").addEventListener("scroll", () => { const b = $("logbox"); logs.follow = b.scrollTop + b.clientHeight >= b.scrollHeight - 8; $("logJump").style.display = logs.follow ? "none" : "inline-block"; });
+$("logJump").onclick = () => { logs.follow = true; renderLogs(); };
+async function loadLogs() {
+  if (!(await hasRoute("/logs/recent"))) { logs.available = false; renderLogs(); return; }
+  try { const p = await api("/logs/recent?limit=" + LOG_MAX); logs.available = true; logs.recentPayload = p; ingestLogs(p); }
+  catch (e) { logs.available = false; }
+  renderLogs();
 }
 
 // ---- notifications: toast + desktop + tab title (only from WebSocket "notification" messages) ----
@@ -486,12 +642,34 @@ async function loadStats() {
     else { $("stRed").textContent = "–"; $("stRedL").textContent = "Fewer alerts"; }
     const lat = Object.entries(s.detection_latency_s || {}).map(([k, v]) => `${esc(k)}: ${(+v).toFixed(1)}s`).join("<br>");
     $("stLat").innerHTML = lat || "–";
+    renderDeliveryLog(s.delivery_log);
   } catch (e) {}
+}
+function renderDeliveryLog(entries) {
+  const tbody = $("dlogBody");
+  if (!entries || !entries.length) { tbody.innerHTML = '<tr><td colspan="5" class="muted">No sends yet.</td></tr>'; return; }
+  tbody.innerHTML = entries.slice().reverse().map(e => `<tr>
+    <td>${fmtT(e.ts)}</td>
+    <td>${esc(e.channel)}</td>
+    <td>${e.severity ? `<span class="badge b-${esc(e.severity)}">${esc(e.severity)}</span>` : "–"}</td>
+    <td class="${e.ok ? "ok" : "fail"}">${e.ok ? "OK" : "Failed"}</td>
+    <td>${Math.round(e.latency_ms)} ms</td>
+  </tr>`).join("");
+}
+function awsReason(checks) {
+  for (const k of ["credentials", "cloudwatch", "sns"]) {
+    const c = checks && checks[k];
+    if (c && c.ok === false && c.error) return `${k}: ${c.error}`;
+  }
+  return "";
 }
 async function loadHealth() {
   try {
     const h = await api("/health");
-    $("aws").textContent = h.aws === "live" ? "Live" : "Dry-run";
+    const el = $("aws");
+    el.className = "aws-" + (h.aws === "live" ? "live" : h.aws === "error" ? "error" : "dryrun");
+    el.textContent = h.aws === "live" ? "Live" : h.aws === "error" ? "Error" : "Dry-run";
+    el.title = h.aws === "live" ? "" : awsReason(h.aws_checks);
     $("llm").textContent = h.llm && h.llm !== "none" ? h.llm : "Off (rule-based)";
   } catch (e) {}
 }
@@ -541,6 +719,7 @@ function connectWS() {
     if (m.type === "metrics") pushFrame(m.data);
     else if (m.type === "incident_opened" || m.type === "incident_updated" || m.type === "incident_resolved") upsertIncident(m.data);
     else if (m.type === "notification") { handleNotification(m.data); loadStats(); }
+    else if (m.type === "logs") ingestLogs(m.data);
   };
   ws.onclose = () => { state.wsOpen = false; setConn("poll"); backoff = Math.min(backoff * 2, 10000); setTimeout(connectWS, backoff); };
   ws.onerror = () => { try { ws.close(); } catch (e) {} };
@@ -559,14 +738,17 @@ $("sens").onchange = async () => {
 };
 
 // Optional: prefill the chart. If the endpoint is absent or fails, the chart starts empty and fills from live data.
+let openapiPaths;
+async function hasRoute(suffix) {
+  if (openapiPaths === undefined) {
+    try { const r = await fetch(BASE + "/openapi.json"); openapiPaths = r.ok ? Object.keys((await r.json()).paths || {}) : null; }
+    catch (e) { openapiPaths = null; }
+  }
+  return openapiPaths === null || openapiPaths.some(p => p.endsWith(suffix)); // no openapi: just try the endpoint
+}
 async function loadHistory() {
   try {
-    let exists = true;
-    try {
-      const r = await fetch(BASE + "/openapi.json");
-      if (r.ok) exists = Object.keys((await r.json()).paths || {}).some(p => p.endsWith("/metrics/history"));
-    } catch (e) { /* no openapi: just try the endpoint */ }
-    if (!exists) return;
+    if (!(await hasRoute("/metrics/history"))) return;
     const h = await api("/metrics/history?seconds=300");
     if (!Array.isArray(h)) return;
     h.forEach(f => { if (f && typeof f.t === "number" && f.services) state.frames.push(f); });
@@ -583,6 +765,7 @@ async function loadHistory() {
   await loadServices();
   await loadHistory();
   await loadIncidents();
+  await loadLogs();
   loadStats(); loadHealth();
   connectWS();
   setInterval(pollTick, 2000);

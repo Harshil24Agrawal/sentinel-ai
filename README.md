@@ -76,23 +76,67 @@ _TBD: table of keys._
 ## Notifications and AWS
 
 Every notification payload is appended, as one JSON line, to `data/notifications_dryrun.jsonl`
-(payloads are redacted a second time on the way out). That is the default and needs no AWS.
+(payloads are redacted a second time on the way out, and this file is written in **every** mode
+— live or dry-run — as a local backup audit trail). That is the default and needs no AWS.
 
 CloudWatch Logs (every incident state change) and SNS (HIGH/CRITICAL opens and escalations, and
-the resolve of a group that notified) are used **only** when `AWS_ENABLED=true` **and** AWS
-credentials are found (environment variables, a profile or a role); otherwise it stays a dry
-run and logs a warning. Sending happens on a background worker with retries, so a slow or failing
-AWS call never delays detection or the dashboard. `/api/health` reports `aws: "live"|"dryrun"`.
+the resolve of a group that notified) are used **only** when `AWS_ENABLED=true` **and** the
+startup self-check passes. On boot the notifier: (1) calls `sts:GetCallerIdentity` to verify
+credentials, (2) creates the CloudWatch log group/stream if missing, (3) calls
+`sns:GetTopicAttributes` on `SNS_TOPIC_ARN`. Each check is independent — CloudWatch failing does
+not stop SNS from going live, and vice versa. Sending itself happens on a background worker with
+retries, so a slow or failing AWS call never delays detection or the dashboard.
+
+`GET /api/health` reports `aws: "live"|"dryrun"|"error"` (`"error"` means credentials themselves
+failed) plus `aws_checks: {credentials, cloudwatch, sns}`, each `{ok, error}`. The dashboard's AWS
+badge shows Live/Dry-run/Error and the reason on hover. `POST /api/aws/test` sends one
+clearly-labeled test message to both CloudWatch and SNS and returns each result — use it to
+verify connectivity without waiting for a real incident. The last 10 sends (any channel) are also
+in `GET /api/stats` as `delivery_log`, shown as a table in the dashboard's Detection Quality panel.
 
 ```
 AWS_ENABLED=true
 AWS_REGION=us-east-1
+AWS_PROFILE=sentinel        # empty uses the standard AWS credential chain instead
 CW_LOG_GROUP=/sentinel-ai/incidents
 CW_LOG_STREAM=demo
 SNS_TOPIC_ARN=arn:aws:sns:us-east-1:<account-id>:<topic>
+DASHBOARD_URL=http://localhost:8000   # linked from SNS notification bodies
 ```
 
-Least-privilege IAM policy (replace the account id, region, group and topic):
+Never put access keys in `.env`; point `AWS_PROFILE` at a named profile (e.g. one set up with
+`aws configure --profile sentinel`) instead, or leave it empty to use the environment/role chain.
+
+### CloudWatch event schema
+
+Every incident state change and notification is one JSON log event with this fixed set of top-
+level fields — a stable contract to write Logs Insights queries against:
+
+| field | meaning |
+|---|---|
+| `event` | `incident_opened` \| `incident_updated` \| `incident_resolved` \| `notification` \| `test` |
+| `incident_id` | the member (per-service) incident id |
+| `group_id` | the correlation group id (one outage) |
+| `service` | the service the event is about |
+| `severity` | `LOW` \| `MEDIUM` \| `HIGH` \| `CRITICAL` |
+| `origin` | the group's probable-origin service |
+| `error_rate` | the triggering signal's current value (null if not an error-rate signal) |
+| `baseline` | that signal's baseline median (null if none) |
+| `z` | that signal's robust z-score (null if none) |
+| `timestamp` | epoch seconds (float) |
+
+Example Logs Insights query — CRITICAL opens in the last day:
+`fields @timestamp, service, origin, error_rate, baseline, z | filter event = "incident_opened" and severity = "CRITICAL" | sort @timestamp desc`
+
+### Readable SNS notifications
+
+Subject: `[<SEVERITY>] SentinelAI: <origin> outage, <N> services affected` (or `[RESOLVED] ...
+recovered, ...` on resolve). Plain-text body: WHAT / HOW BAD / AFFECTED / PROBABLE CAUSE / HINT /
+TIMELINE (last 8 entries) / a link to `DASHBOARD_URL`. Redacted a second time on the way out
+(defense in depth) and well under SNS's 256 KB message limit.
+
+Least-privilege IAM policy for the `sentinel-ai` user (replace the account id, region, group and
+topic):
 
 ```json
 {
@@ -100,20 +144,23 @@ Least-privilege IAM policy (replace the account id, region, group and topic):
   "Statement": [
     {
       "Effect": "Allow",
-      "Action": ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
-      "Resource": [
-        "arn:aws:logs:us-east-1:<account-id>:log-group:/sentinel-ai/incidents",
-        "arn:aws:logs:us-east-1:<account-id>:log-group:/sentinel-ai/incidents:log-stream:*"
-      ]
+      "Action": [
+        "logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents",
+        "logs:DescribeLogStreams"
+      ],
+      "Resource": "arn:aws:logs:us-east-1:<account-id>:log-group:/sentinel-ai/*"
     },
     {
       "Effect": "Allow",
-      "Action": "sns:Publish",
+      "Action": ["sns:Publish", "sns:GetTopicAttributes"],
       "Resource": "arn:aws:sns:us-east-1:<account-id>:<topic>"
     }
   ]
 }
 ```
+
+`sts:GetCallerIdentity` (used by the startup self-check) needs no resource-level permission —
+every principal can call it.
 
 ## Design decisions
 
@@ -130,3 +177,6 @@ Where the spec was ambiguous, the choice is configurable. Recorded here as they 
   literal "window volume < 20% of median", which takes about 48 s to fire.
 - A silent service is released when its recent volume is back to 50% of normal
   (`SILENCE_RESOLVE_RATIO`), not on a z-score (see `docs/DESIGN.md`).
+- `GET /api/health.aws` reports a third value, `"error"`, beyond the spec's `"live"|"dryrun"`:
+  it means the AWS credentials themselves failed the startup self-check (as opposed to `"dryrun"`,
+  which also covers AWS simply being disabled). `aws_checks` gives the per-check reason either way.

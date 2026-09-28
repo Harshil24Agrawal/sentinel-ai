@@ -19,7 +19,7 @@ from app.config import Settings, get_settings
 from app.correlation import CorrelationEngine, CorrelationGroup, DependencyGraph, Member
 from app.detectors import Evaluation
 from app.explainer.base import Explainer
-from app.explainer.rule_based import RuleBasedExplainer
+from app.explainer.rule_based import RuleBasedExplainer, format_duration
 from app.hints import PatternKey, hint_for, merge_evidence, rank_patterns, top_patterns
 from app.models import (
     Escalation,
@@ -569,27 +569,45 @@ class IncidentManager:
     ) -> NotifyRequest:
         origin = self._engine.origin(group)
         member = next(m for m in group.members if m.service == origin)
-        card = self._incidents[member.incident_id]
+        card = self._card(group)  # the full, merged evidence (what/timeline/patterns/hint)
         stamp = datetime.fromtimestamp(now, UTC).strftime("%Y-%m-%d %H:%M:%SZ")
-        top = card.patterns[0] if card.patterns else None
+        n = len(card.affected_services) or 1
+        plural = "s" if n != 1 else ""
+        if kind == "resolved":
+            subject = (
+                f"[RESOLVED] SentinelAI: {origin} outage recovered, {n} service{plural} affected"
+            )
+        else:
+            subject = (
+                f"[{severity.name}] SentinelAI: {origin} outage, {n} service{plural} affected"
+            )
+
         lines = [
-            f"SentinelAI {severity.name} incident, origin {origin} ({kind})",
-            f"What: {card.what or 'n/a'}",
-            f"Affected: {', '.join(card.affected_services) or origin}",
+            f"SentinelAI incident — {kind.upper()} ({severity.name})",
+            "",
+            f"WHAT: {card.what or 'n/a'}",
+            f"HOW BAD: peak z={card.peak_z:.1f}, duration {format_duration(card.duration_s)}, "
+            f"{card.failed_ops} failed ops",
+            f"AFFECTED: {', '.join(card.affected_services) or origin}",
         ]
+        top = card.patterns[0] if card.patterns else None
         if top is not None:
             tag = "NEW " if top.is_new else ""
-            lines.append(f"Top pattern: {tag}{top.template} (x{top.count}, {top.service})")
-        lines.append(f"Probable cause (hint): {card.hint}")
-        lines.append(f"Incident {card.id} / group {group.id} at {stamp}")
-        subject = (
-            f"[SentinelAI] RESOLVED: {origin}"
-            if kind == "resolved"
-            else f"[SentinelAI] {severity.name}: {origin} incident"
-        )
+            lines.append(f"PROBABLE CAUSE: {tag}{top.template} (x{top.count}, {top.service})")
+        lines.append(f"HINT: {card.hint or 'n/a'}")
+        lines.append("")
+        lines.append("TIMELINE:")
+        for entry in card.story[-8:]:
+            t = datetime.fromtimestamp(entry.t, UTC).strftime("%H:%M:%SZ")
+            sev = f" [{entry.severity.name}]" if entry.severity else ""
+            lines.append(f"  {t}  {entry.service}{sev}  {entry.event}")
+        lines.append("")
+        lines.append(f"Dashboard: {self._settings.DASHBOARD_URL.rstrip('/')}/?incident={group.id}")
+        lines.append(f"Incident {member.incident_id} / group {group.id} at {stamp}")
+
         payload: dict[str, Any] = {
             "kind": kind,
-            "incident_id": card.id,
+            "incident_id": member.incident_id,
             "group_id": group.id,
             "severity": severity.name,
             "origin": origin,
@@ -602,7 +620,7 @@ class IncidentManager:
         }
         return NotifyRequest(
             kind=kind,  # type: ignore[arg-type]
-            incident_id=card.id,
+            incident_id=member.incident_id,
             group_id=group.id,
             severity=severity,
             subject=subject[:100],

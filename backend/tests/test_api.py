@@ -53,9 +53,10 @@ def outage() -> tuple[TestClient, LineRig]:
 
 def test_health(healthy: TestClient) -> None:
     data = healthy.get("/api/health").json()
-    assert set(data) == {"status", "uptime_s", "aws", "llm"}
+    assert set(data) == {"status", "uptime_s", "aws", "aws_checks", "llm"}
     assert data["status"] == "ok" and data["aws"] == "dryrun" and data["llm"] == "none"
     assert data["uptime_s"] == pytest.approx(WARM, abs=1)
+    assert set(data["aws_checks"]) == {"credentials", "cloudwatch", "sns"}
 
 
 def test_services_have_the_contract_fields(healthy: TestClient) -> None:
@@ -238,7 +239,7 @@ def test_stats_have_the_contract_fields(outage: tuple[TestClient, LineRig]) -> N
     stats = client.get("/api/stats").json()
     assert set(stats) == {
         "naive_alerts", "sentinel_incidents", "sentinel_notifications", "detection_latency_s",
-        "phi_redacted",
+        "phi_redacted", "delivery_log",
     }  # fmt: skip
     assert stats["sentinel_incidents"] == 1  # groups, not per-service incidents
     assert stats["naive_alerts"] > stats["sentinel_notifications"]
