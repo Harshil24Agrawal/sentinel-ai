@@ -5,8 +5,6 @@ Built for the Acentra Health hackathon (Problem 1: Real-Time Log Anomaly Detecto
 
 **Detect early. Explain clearly. Show impact. Support human response.**
 
-> Status: backend complete through Phase 4 (ingestion, detection, incidents, REST + WebSocket API).
-> Sections marked _TBD_ are filled in by later phases (see `CLAUDE.md` §14).
 
 ## Setup (Windows, PowerShell, conda env `sentinel`)
 
